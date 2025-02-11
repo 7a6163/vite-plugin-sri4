@@ -1,0 +1,20 @@
+{
+  "name": "vite-plugin-sri4",
+  "version": "1.0.0",
+  "description": "A Vite plugin to generate Subresource Integrity (SRI) hashes for output files.",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.0"
+  },
+  "keywords": [
+    "vite",
+    "plugin",
+    "sri",
+    "subresource integrity"
+  ],
+  "author": "Your Name",
+  "license": "ISC"
+}
