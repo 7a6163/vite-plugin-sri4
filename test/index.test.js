@@ -276,7 +276,7 @@ describe('vite-plugin-sri4', () => {
     it('should handle network timeouts', async () => {
       mocks.mockFetch.mockImplementationOnce(() =>
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), 6000)
+          setTimeout(() => reject(new Error('Timeout')), 100)
         )
       );
 
