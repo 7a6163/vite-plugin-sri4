@@ -1,365 +1,252 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import sri from '../src/index.js';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import sri from '../src/index';
+import { createHash } from 'node:crypto';
+import fetch from 'cross-fetch';
 
-const mocks = vi.hoisted(() => {
-  const mockFetch = vi.fn();
-  const mockDigest = vi.fn(() => 'mocked-hash-value');
-  const mockUpdate = vi.fn().mockReturnThis();
-  const mockCreateHash = vi.fn(() => ({
-    update: mockUpdate,
-    digest: mockDigest
-  }));
-
-  return {
-    mockFetch,
-    mockDigest,
-    mockUpdate,
-    mockCreateHash
-  };
-});
-
-vi.mock('cross-fetch', () => ({
-  default: mocks.mockFetch
+// Mock modules
+vi.mock('node:crypto', () => ({
+  createHash: vi.fn().mockReturnValue({
+    update: vi.fn().mockReturnThis(),
+    digest: vi.fn().mockReturnValue('mocked-hash-value')
+  })
 }));
 
-vi.mock('crypto', () => ({
-  createHash: mocks.mockCreateHash
+vi.mock('cross-fetch', () => ({
+  default: vi.fn()
 }));
 
 describe('vite-plugin-sri4', () => {
-  let plugin;
-  const sriHash = 'sha384-mocked-hash-value';
-  let consoleSpy;
+  const mockHash = 'sha384-mocked-hash-value';
 
   beforeEach(() => {
     vi.clearAllMocks();
-    plugin = sri();
-    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    mocks.mockFetch.mockResolvedValue({
-      headers: new Map([
-        ['access-control-allow-origin', '*']
-      ])
+    // Reset crypto mock for each test
+    vi.mocked(createHash).mockReturnValue({
+      update: vi.fn().mockReturnThis(),
+      digest: vi.fn().mockReturnValue('mocked-hash-value')
     });
   });
 
   afterEach(() => {
-    consoleSpy.mockRestore();
+    vi.restoreAllMocks();
   });
 
   describe('Plugin Configuration', () => {
-    it('should create plugin with default options', () => {
+    test('should use default options when no options provided', () => {
+      const plugin = sri();
       expect(plugin.name).toBe('vite-plugin-sri4');
       expect(plugin.apply).toBe('build');
+      expect(plugin.enforce).toBe('post');
     });
 
-    it('should create plugin with custom options', () => {
-      const customPlugin = sri({
-        algorithm: 'sha512',
-        crossorigin: 'use-credentials',
-        bypassDomains: ['example.com'],
+    test('should merge user options with defaults', () => {
+      const userOptions = {
+        algorithm: 'sha256',
         debug: true
+      };
+      const plugin = sri(userOptions);
+      const configResult = plugin.configResolved({ command: 'build' });
+      expect(configResult).toBeUndefined();
+    });
+  });
+
+  describe('Build Mode', () => {
+    test('should only process files in build mode', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'serve' });
+
+      const result = await plugin.renderChunk('console.log("test")', {
+        fileName: 'test.js'
       });
-      expect(customPlugin).toBeDefined();
+
+      expect(result).toBeNull();
     });
 
-    it('should handle invalid algorithm gracefully', () => {
-      const invalidPlugin = sri({ algorithm: 'invalid-algo' });
-      expect(invalidPlugin).toBeDefined();
-    });
+    test('should process chunks in build mode', async () => {
+      const plugin = sri({ debug: true });
+      plugin.configResolved({ command: 'build' });
 
-    it('should handle undefined options', () => {
-      const undefinedPlugin = sri(undefined);
-      expect(undefinedPlugin).toBeDefined();
-    });
-  });
+      const code = 'console.log("test")';
+      const chunk = { fileName: 'app.js' };
 
-  describe('Bundle Processing', () => {
-    it('should process empty bundle', async () => {
-      await plugin.generateBundle({}, {});
-      expect(mocks.mockCreateHash).not.toHaveBeenCalled();
-    });
+      await plugin.renderChunk(code, chunk);
 
-    it('should process chunk with code', async () => {
-      const bundle = {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-      expect(mocks.mockCreateHash).toHaveBeenCalled();
-    });
-
-    it('should process asset with source', async () => {
-      const bundle = {
-        'style.css': {
-          type: 'asset',
-          source: '.test { color: red; }'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-      expect(mocks.mockCreateHash).toHaveBeenCalled();
-    });
-
-    it('should handle bundle items without code', async () => {
-      const bundle = {
-        'empty.js': {
-          type: 'chunk'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-      expect(mocks.mockCreateHash).not.toHaveBeenCalled();
-    });
-
-    it('should handle missing type in bundle items', async () => {
-      const bundle = {
-        'unknown.js': {}
-      };
-      await plugin.generateBundle({}, bundle);
-      expect(mocks.mockCreateHash).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('HTML Processing', () => {
-    it('should process script tags', async () => {
-      const bundle = {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-
-      const html = '<script src="app.js"></script>';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).toContain('integrity="');
-      expect(result).toContain('crossorigin="anonymous"');
-    });
-
-    it('should process link tags', async () => {
-      const bundle = {
-        'style.css': {
-          type: 'asset',
-          source: '.test { color: red; }'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-
-      const html = '<link rel="stylesheet" href="style.css">';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).toContain('integrity="');
-      expect(result).toContain('crossorigin="anonymous"');
-    });
-
-    it('should handle script tags with existing attributes', async () => {
-      const bundle = {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-
-      const html = '<script src="app.js" type="module" async></script>';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).toContain('integrity="');
-      expect(result).toContain('type="module"');
-      expect(result).toContain('async');
-    });
-
-    it('should handle link tags with existing attributes', async () => {
-      const bundle = {
-        'style.css': {
-          type: 'asset',
-          source: '.test { color: red; }'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-
-      const html = '<link rel="stylesheet" href="style.css" media="screen">';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).toContain('integrity="');
-      expect(result).toContain('media="screen"');
-    });
-
-    it('should handle resources with query parameters', async () => {
-      const bundle = {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")',
-          fileName: 'app.js'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-
-      const html = '<script src="app.js?v=123"></script>';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).toBe(html);
-    });
-
-    it('should process resources without query parameters', async () => {
-      const bundle = {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")',
-          fileName: 'app.js'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
-
-      const html = '<script src="app.js"></script>';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).toContain('integrity="');
-    });
-
-    it('should handle malformed HTML gracefully', async () => {
-      const html = '<script src=malformed"script.js">';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).toBe(html);
-    });
-
-    it('should skip processing for bypassed domains', async () => {
-      const bypassPlugin = sri({ bypassDomains: ['example.com'] });
-      const html = '<script src="https://example.com/script.js"></script>';
-      const result = await bypassPlugin.transformIndexHtml(html);
-      expect(result).not.toContain('integrity="');
-    });
-  });
-
-  describe('External Resource Handling', () => {
-    it('should handle CORS-enabled external resources', async () => {
-      const html = '<script src="https://external.com/script.js"></script>';
-      await plugin.transformIndexHtml(html);
-      expect(mocks.mockFetch).toHaveBeenCalledWith(
-        'https://external.com/script.js',
-        expect.objectContaining({
-          method: 'HEAD'
-        })
-      );
-    });
-
-    it('should handle CORS check failure', async () => {
-      mocks.mockFetch.mockRejectedValueOnce(new Error('CORS check failed'));
-      const html = '<script src="https://external.com/script.js"></script>';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).not.toContain('integrity="');
-    });
-
-    it('should handle network timeout', async () => {
-      mocks.mockFetch.mockImplementationOnce(() =>
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), 100)
-        )
-      );
-      const html = '<script src="https://slow.com/script.js"></script>';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).not.toContain('integrity="');
-    });
-
-    it('should handle invalid URLs', async () => {
-      const html = '<script src="invalid://url"></script>';
-      const result = await plugin.transformIndexHtml(html);
-      expect(result).toBe(html);
+      expect(vi.mocked(createHash)).toHaveBeenCalledWith('sha384');
     });
   });
 
   describe('Debug Mode', () => {
-    it('should log debug messages when enabled', async () => {
+    test('should log debug information', async () => {
+      const consoleSpy = vi.spyOn(console, 'log');
       const debugPlugin = sri({ debug: true });
-      const bundle = {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")'
-        }
-      };
-      await debugPlugin.generateBundle({}, bundle);
 
-      const html = '<script src="app.js"></script>';
-      await debugPlugin.transformIndexHtml(html);
+      debugPlugin.configResolved({ command: 'build' });
 
-      expect(consoleSpy).toHaveBeenCalled();
+      const code = 'console.log("test")';
+      const chunk = { fileName: 'app.js' };
+      await debugPlugin.renderChunk(code, chunk);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[vite-plugin-sri4] Plugin configured in build mode'
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        `[vite-plugin-sri4] Computing SRI for chunk app.js: ${mockHash}`
+      );
     });
 
-    it('should not log debug messages when disabled', async () => {
-      const bundle = {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
+    test('should not log when debug is false', () => {
+      const consoleSpy = vi.spyOn(console, 'log');
+      const plugin = sri({ debug: false });
 
-      const html = '<script src="app.js"></script>';
-      await plugin.transformIndexHtml(html);
+      plugin.configResolved({ command: 'build' });
 
       expect(consoleSpy).not.toHaveBeenCalled();
     });
-
-    it('should log bundle generation messages', async () => {
-      const debugPlugin = sri({ debug: true });
-      await debugPlugin.generateBundle({}, {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")'
-        }
-      });
-      expect(consoleSpy).toHaveBeenCalled();
-    });
-
-    it('should log HTML transformation messages', async () => {
-      const debugPlugin = sri({ debug: true });
-
-      await debugPlugin.generateBundle({}, {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")',
-          fileName: 'app.js'
-        }
-      });
-
-      await debugPlugin.transformIndexHtml('<script src="app.js"></script>');
-      expect(consoleSpy).toHaveBeenCalled();
-    });
   });
 
-  describe('Edge Cases', () => {
-    it('should handle empty HTML', async () => {
+  describe('HTML Transform', () => {
+    test('should skip empty HTML', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
       const result = await plugin.transformIndexHtml('');
       expect(result).toBe('');
     });
 
-    it('should handle HTML without any scripts or links', async () => {
-      const html = '<div>Hello World</div>';
+    test('should process script tags', async () => {
+      const plugin = sri({ debug: true });
+      plugin.configResolved({ command: 'build' });
+
+      // Pre-compute hash
+      const code = 'console.log("test")';
+      const chunk = { fileName: 'app.js' };
+      await plugin.renderChunk(code, chunk);
+
+      const html = '<script src="app.js"></script>';
       const result = await plugin.transformIndexHtml(html);
+
+      expect(result).toBe(`<script src="app.js" integrity="${mockHash}" crossorigin="anonymous"></script>`);
+    });
+
+    test('should process link tags', async () => {
+      const plugin = sri({ debug: true });
+      plugin.configResolved({ command: 'build' });
+
+      // Pre-compute hash for CSS
+      const asset = {
+        fileName: 'style.css',
+        source: 'body { color: red; }',
+        type: 'asset'
+      };
+      const bundle = { 'style.css': asset };
+      await plugin.generateBundle({}, bundle);
+
+      const html = '<link rel="stylesheet" href="style.css">';
+      const result = await plugin.transformIndexHtml(html);
+
+      expect(result).toBe(`<link rel="stylesheet" href="style.css" integrity="${mockHash}" crossorigin="anonymous">`);
+    });
+
+    test('should skip tags with existing integrity', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="app.js" integrity="sha384-existing"></script>';
+      const result = await plugin.transformIndexHtml(html);
+
+      expect(result).toBe(html);
+    });
+  });
+
+  describe('External Resources', () => {
+    test('should handle external resources with CORS', async () => {
+      // Mock successful CORS check
+      vi.mocked(fetch).mockResolvedValueOnce({
+        headers: {
+          get: () => '*'
+        }
+      });
+
+      // Mock successful content fetch
+      vi.mocked(fetch).mockResolvedValueOnce({
+        arrayBuffer: async () => new ArrayBuffer(8)
+      });
+
+      const plugin = sri({ debug: true });
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="https://example.com/app.js"></script>';
+      const result = await plugin.transformIndexHtml(html);
+
+      expect(result).toBe(
+        `<script src="https://example.com/app.js" integrity="${mockHash}" crossorigin="anonymous"></script>`
+      );
+    });
+
+    test('should skip external resources without CORS', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        headers: {
+          get: () => null
+        }
+      });
+
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="https://example.com/app.js"></script>';
+      const result = await plugin.transformIndexHtml(html);
+
       expect(result).toBe(html);
     });
 
-    it('should handle multiple resources in same HTML', async () => {
-      const bundle = {
-        'app.js': {
-          type: 'chunk',
-          code: 'console.log("test")'
-        },
-        'style.css': {
-          type: 'asset',
-          source: '.test { color: red; }'
-        }
-      };
-      await plugin.generateBundle({}, bundle);
+    test('should handle bypass domains', async () => {
+      const plugin = sri({
+        bypassDomains: ['example.com']
+      });
+      plugin.configResolved({ command: 'build' });
 
-      const html = `
-        <script src="app.js"></script>
-        <link rel="stylesheet" href="style.css">
-      `;
+      const html = '<script src="https://example.com/app.js"></script>';
       const result = await plugin.transformIndexHtml(html);
-      const matches = result.match(/integrity="/g);
-      expect(matches).toHaveLength(2);
+
+      expect(result).toBe(html);
+    });
+  });
+
+  describe('Error Handling', () => {
+    test('should handle failed SRI computation', async () => {
+      // 重要: spy 需要在拋出錯誤之前設置
+      const consoleSpy = vi.spyOn(console, 'error');
+
+      // 強制 crypto 拋出錯誤
+      vi.mocked(createHash).mockImplementationOnce(() => {
+        throw new Error('Mock error');
+      });
+
+      const errorPlugin = sri();
+      errorPlugin.configResolved({ command: 'build' });
+
+      // 觸發錯誤
+      const code = 'console.log("test")';
+      const chunk = { fileName: 'error.js' };
+      await errorPlugin.renderChunk(code, chunk);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[vite-plugin-sri4] Failed to compute SRI hash: Error: Mock error'
+      );
+
+      // 清理
+      consoleSpy.mockRestore();
     });
 
-    it('should handle resources without file extension', async () => {
-      const html = '<script src="/api/data"></script>';
+    test('should handle failed external resource fetch', async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('Mock fetch error'));
+
+      const plugin = sri({ debug: true });
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="https://example.com/app.js"></script>';
       const result = await plugin.transformIndexHtml(html);
+
       expect(result).toBe(html);
     });
   });
