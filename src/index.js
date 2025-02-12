@@ -10,23 +10,12 @@ const DEFAULT_OPTIONS = {
   debug: false
 };
 
-/**
- * Log debug messages if debug mode is enabled
- * @param {string} message - Message to log
- * @param {Object} options - Plugin options
- */
 function log(message, options) {
   if (options.debug) {
     console.log(`${LOG_PREFIX} ${message}`);
   }
 }
 
-/**
- * Compute SRI hash for given content
- * @param {string|Buffer} content - Content to hash
- * @param {string} algorithm - Hash algorithm to use
- * @returns {string|null} SRI hash string or null if failed
- */
 function computeSri(content, algorithm = 'sha384') {
   try {
     const hash = createHash(algorithm)
@@ -39,17 +28,10 @@ function computeSri(content, algorithm = 'sha384') {
   }
 }
 
-/**
- * Check if external resource has CORS enabled
- * @param {string} url - URL to check
- * @param {Object} options - Plugin options
- * @returns {Promise<boolean>} Whether CORS is enabled
- */
 async function externalResourceIsCorsEnabled(url, options) {
   try {
     const response = await fetch(url, {
-      method: 'HEAD',
-      timeout: 5000
+      method: 'HEAD'
     });
     const acao = response.headers.get('access-control-allow-origin');
     if (acao && (acao === '*' || acao.includes(options.domain || ''))) {
@@ -62,12 +44,6 @@ async function externalResourceIsCorsEnabled(url, options) {
   }
 }
 
-/**
- * Check if URL belongs to bypass domains
- * @param {string} url - URL to check
- * @param {string[]} bypassDomains - List of domains to bypass
- * @returns {boolean} Whether URL belongs to bypass domains
- */
 function isBypassDomain(url, bypassDomains = []) {
   if (!bypassDomains.length) return false;
   try {
@@ -83,28 +59,37 @@ function isBypassDomain(url, bypassDomains = []) {
   }
 }
 
-/**
- * Check if tag already has crossorigin attribute
- * @param {string} tag - HTML tag to check
- * @returns {boolean} Whether tag has crossorigin attribute
- */
 function hasCrossOriginAttr(tag) {
   return /(?:^|\s)crossorigin(?:=["']?[^"'\s>]*["']?)?(?:\s|>|$)/i.test(tag);
 }
 
-/**
- * Process individual HTML tags and add SRI attributes
- * @param {string} tag - HTML tag to process
- * @param {string} url - Resource URL
- * @param {Object} options - Plugin options
- * @param {Map} sriMap - Map of file names to SRI hashes
- * @returns {Promise<string>} Processed HTML tag
- */
+function getAllPossiblePaths(url) {
+  const paths = [
+    url,
+    url.startsWith('/') ? url.slice(1) : url,
+    url.startsWith('/static/') ? url.slice(8) : url,
+    !url.startsWith('/static/') ? `static/${url}` : url,
+    !url.startsWith('/static/') ? `/static/${url}` : url,
+    url.replace(/^\/static\//, ''),
+    url.replace(/^static\//, '')
+  ];
+
+  const withoutHash = url.replace(/-[a-zA-Z0-9]+\./, '.');
+  if (withoutHash !== url) {
+    paths.push(...getAllPossiblePaths(withoutHash));
+  }
+
+  return [...new Set(paths)];
+}
+
 async function processTag(tag, url, options, sriMap) {
   if (tag.includes('integrity=')) {
     log(`Skip tag with existing integrity attribute: ${tag}`, options);
     return tag;
   }
+
+  log(`Processing tag: ${tag}`, options);
+  log(`URL: ${url}`, options);
 
   // Handle external resources
   if (/^(https?:)?\/\//i.test(url)) {
@@ -127,7 +112,9 @@ async function processTag(tag, url, options, sriMap) {
         log(`Computing SRI for external resource ${url}: ${hash}`, options);
         const hasCrossOrigin = hasCrossOriginAttr(tag);
         const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
-        return tag.replace(/>$/, ` integrity="${hash}"${crossOriginAttr}>`);
+        const newTag = tag.replace(/>$/, ` integrity="${hash}"${crossOriginAttr}>`);
+        log(`New tag: ${newTag}`, options);
+        return newTag;
       }
     } catch (error) {
       log(`Failed to process external resource ${url}: ${error}`, options);
@@ -136,24 +123,33 @@ async function processTag(tag, url, options, sriMap) {
   }
 
   // Handle local resources
-  const fileName = url.startsWith('/') ? url.slice(1) : url;
-  const integrity = sriMap.get(fileName);
-  if (integrity) {
-    log(`Using precomputed SRI for ${fileName}: ${integrity}`, options);
-    const hasCrossOrigin = hasCrossOriginAttr(tag);
-    const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
-    return tag.replace(/>$/, ` integrity="${integrity}"${crossOriginAttr}>`);
+  const possiblePaths = getAllPossiblePaths(url);
+  let integrity = null;
+
+  log(`Checking possible paths for ${url}:`, options);
+  for (const path of possiblePaths) {
+    log(`- Checking path: ${path}`, options);
+    if (sriMap.has(path)) {
+      integrity = sriMap.get(path);
+      log(`Found integrity for path ${path}: ${integrity}`, options);
+      break;
+    }
   }
 
-  log(`No SRI hash found for ${fileName}`, options);
+  if (integrity) {
+    log(`Using precomputed SRI for ${url}: ${integrity}`, options);
+    const hasCrossOrigin = hasCrossOriginAttr(tag);
+    const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
+    const newTag = tag.replace(/>$/, ` integrity="${integrity}"${crossOriginAttr}>`);
+    log(`New tag: ${newTag}`, options);
+    return newTag;
+  }
+
+  log(`No SRI hash found for ${url}`, options);
+  log(`Available paths in sriMap: ${Array.from(sriMap.keys()).join(', ')}`, options);
   return tag;
 }
 
-/**
- * Vite plugin for adding Subresource Integrity (SRI) hashes to assets
- * @param {Object} userOptions - Plugin options
- * @returns {import('vite').Plugin} Vite plugin object
- */
 export default function sri(userOptions = {}) {
   const options = { ...DEFAULT_OPTIONS, ...userOptions };
   const sriMap = new Map();
@@ -175,8 +171,10 @@ export default function sri(userOptions = {}) {
 
       const hash = computeSri(code, options.algorithm);
       if (hash) {
-        sriMap.set(chunk.fileName, hash);
-        log(`Computing SRI for chunk ${chunk.fileName}: ${hash}`, options);
+        for (const path of getAllPossiblePaths(chunk.fileName)) {
+          sriMap.set(path, hash);
+          log(`Stored SRI for path ${path}: ${hash}`, options);
+        }
       }
       return null;
     },
@@ -189,10 +187,17 @@ export default function sri(userOptions = {}) {
         if (chunk.type === 'asset' && !sriMap.has(fileName)) {
           const hash = computeSri(chunk.source, options.algorithm);
           if (hash) {
-            sriMap.set(fileName, hash);
-            log(`Computing SRI for asset ${fileName}: ${hash}`, options);
+            for (const path of getAllPossiblePaths(fileName)) {
+              sriMap.set(path, hash);
+              log(`Computing SRI for asset ${path}: ${hash}`, options);
+            }
           }
         }
+      }
+
+      log('Final sriMap contents:', options);
+      for (const [key, value] of sriMap.entries()) {
+        log(`${key} => ${value}`, options);
       }
     },
 
@@ -203,18 +208,25 @@ export default function sri(userOptions = {}) {
       }
 
       try {
+        log('Starting HTML transformation', options);
+        log(`SRI Map size: ${sriMap.size}`, options);
+
         // Process script tags
         const scriptTags = html.match(/<script[^>]+src=["']([^"']+)["'][^>]*>/g) || [];
+        log(`Found ${scriptTags.length} script tags`, options);
         for (const tag of scriptTags) {
           const url = tag.match(/src=["']([^"']+)["']/)[1];
+          log(`Processing script: ${url}`, options);
           const newTag = await processTag(tag, url, options, sriMap);
           html = html.replace(tag, newTag);
         }
 
         // Process link tags
         const linkTags = html.match(/<link[^>]+href=["']([^"']+)["'][^>]*>/g) || [];
+        log(`Found ${linkTags.length} link tags`, options);
         for (const tag of linkTags) {
           const url = tag.match(/href=["']([^"']+)["']/)[1];
+          log(`Processing link: ${url}`, options);
           const newTag = await processTag(tag, url, options, sriMap);
           html = html.replace(tag, newTag);
         }
