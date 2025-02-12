@@ -41,3 +41,4 @@ coverage/
 # Temporary files
 *.tmp
 
+test-report.junit.xml
