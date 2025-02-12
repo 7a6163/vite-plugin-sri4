@@ -86,12 +86,21 @@ describe('vite-plugin-sri4', () => {
       const chunk = { fileName: 'app.js' };
       await debugPlugin.renderChunk(code, chunk);
 
-      expect(consoleSpy).toHaveBeenCalledWith(
+      // 驗證日誌順序
+      expect(consoleSpy).toHaveBeenNthCalledWith(1,
         '[vite-plugin-sri4] Plugin configured in build mode'
       );
-      expect(consoleSpy).toHaveBeenCalledWith(
-        `[vite-plugin-sri4] Computing SRI for chunk app.js: ${mockHash}`
+      expect(consoleSpy).toHaveBeenNthCalledWith(2,
+        '[vite-plugin-sri4] Stored SRI for path app.js: sha384-mocked-hash-value'
       );
+      expect(consoleSpy).toHaveBeenNthCalledWith(3,
+        '[vite-plugin-sri4] Stored SRI for path static/app.js: sha384-mocked-hash-value'
+      );
+      expect(consoleSpy).toHaveBeenNthCalledWith(4,
+        '[vite-plugin-sri4] Stored SRI for path /static/app.js: sha384-mocked-hash-value'
+      );
+
+      expect(consoleSpy).toHaveBeenCalledTimes(4);
     });
 
     test('should not log when debug is false', () => {
@@ -102,7 +111,7 @@ describe('vite-plugin-sri4', () => {
 
       expect(consoleSpy).not.toHaveBeenCalled();
     });
-  });
+});
 
   describe('HTML Transform', () => {
     test('should skip empty HTML', async () => {
