@@ -30,7 +30,7 @@ async function externalResourceIsCorsEnabled(url, options) {
   try {
     const response = await fetch(url, {
       method: 'HEAD',
-      timeout: 5000 // 5 seconds timeout
+      timeout: 5000
     });
     const acao = response.headers.get('access-control-allow-origin');
     if (acao && (acao === '*' || acao.includes(options.domain || ''))) {
@@ -82,6 +82,10 @@ function isBypassDomain(url, bypassDomains = []) {
   } catch (e) {
     return false;
   }
+}
+
+function hasCrossOriginAttr(tag) {
+  return /crossorigin=/i.test(tag);
 }
 
 export default function sri(userOptions = {}) {
@@ -141,6 +145,13 @@ export default function sri(userOptions = {}) {
         const integrity = sriMap.get(fileName);
 
         if (integrity) {
+          const hasCrossOrigin = hasCrossOriginAttr(tag);
+          if (hasCrossOrigin) {
+            return tag.replace(
+              />$/,
+              ` integrity="${integrity}">`
+            );
+          }
           return tag.replace(
             />$/,
             ` integrity="${integrity}" crossorigin="${options.crossorigin}">`
@@ -150,14 +161,12 @@ export default function sri(userOptions = {}) {
         return tag;
       };
 
-      // Process scripts
       html = await replaceAsync(
         html,
         /(<script[^>]+(?:src="([^"]+)"[^>]*|type="module"[^>]*src="([^"]+)"[^>]*)>)/g,
         processTag
       );
 
-      // Process links
       html = await replaceAsync(
         html,
         /(<link[^>]+href="([^"]+)"[^>]*>)/g,
