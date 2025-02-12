@@ -23,7 +23,7 @@ jobs:
         run: npm ci
 
       - name: Run Tests
-        run: npm test
+        run: npm test:ci
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
