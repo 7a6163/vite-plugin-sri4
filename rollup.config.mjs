@@ -19,7 +19,7 @@ export default {
   ],
   external: [
     'vite',
-    'node-fetch',
+    'cross-fetch',
     'node:crypto'
   ]
 };
