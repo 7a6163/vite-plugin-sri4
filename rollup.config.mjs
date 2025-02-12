@@ -17,5 +17,9 @@ export default {
     nodeResolve(),
     commonjs()
   ],
-  external: ['vite', 'node-fetch']
+  external: [
+    'vite',
+    'node-fetch',
+    'node:crypto'
+  ]
 };
