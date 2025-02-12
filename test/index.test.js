@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('node-fetch', () => ({
+vi.mock('cross-fetch', () => ({
   default: mocks.mockFetch
 }));
 
