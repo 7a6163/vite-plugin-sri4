@@ -85,7 +85,7 @@ function isBypassDomain(url, bypassDomains = []) {
 }
 
 function hasCrossOriginAttr(tag) {
-  return /crossorigin=/i.test(tag);
+  return /(?:^|\s)crossorigin(?:=["']?[^"'\s>]*["']?)?(?:\s|>|$)/i.test(tag);
 }
 
 export default function sri(userOptions = {}) {
@@ -147,15 +147,15 @@ export default function sri(userOptions = {}) {
 
         if (integrity) {
           const hasCrossOrigin = hasCrossOriginAttr(tag);
-          if (hasCrossOrigin) {
+          if (!hasCrossOrigin) {
             return tag.replace(
               />$/,
-              ` integrity="${integrity}">`
+              ` integrity="${integrity}" crossorigin="${options.crossorigin}">`
             );
           }
           return tag.replace(
             />$/,
-            ` integrity="${integrity}" crossorigin="${options.crossorigin}">`
+            ` integrity="${integrity}">`
           );
         }
 
