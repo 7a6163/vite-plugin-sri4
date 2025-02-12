@@ -94,6 +94,7 @@ export default function sri(userOptions = {}) {
 
   return {
     name: 'vite-plugin-sri4',
+    enforce: 'post',
     apply: 'build',
 
     configResolved(config) {
