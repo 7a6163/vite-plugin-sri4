@@ -9,6 +9,7 @@ export default defineConfig({
       exclude: [
         'node_modules/',
         'test/',
+        'rollup.config.mjs',
         'dist/',
         '**/*.d.ts',
         '**/*.config.js',
