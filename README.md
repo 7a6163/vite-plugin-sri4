@@ -1,5 +1,8 @@
 # vite-plugin-sri4
 
+![NPM Version](https://img.shields.io/npm/v/vite-plugin-sri4)
+[![codecov](https://codecov.io/gh/7a6163/vite-plugin-sri4/branch/main/graph/badge.svg)](https://codecov.io/gh/7a6163/vite-plugin-sri4)
+
 A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets during the build process. This plugin computes SRI hashes for JavaScript and CSS files and injects them as `integrity` and `crossorigin="anonymous"` attributes into your HTML, ensuring your resources have not been tampered with when loaded by browsers.
 
 ## Features
