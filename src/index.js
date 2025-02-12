@@ -1,189 +1,167 @@
-import { createHash } from 'crypto';
-import fetch from 'node-fetch'; // Install node-fetch using: npm install node-fetch
+import { createHash } from 'node:crypto';
+import fetch from 'node-fetch';
 
-/**
- * Compute the SRI (Subresource Integrity) hash for the given content.
- * @param {string | Buffer} content - The content to hash.
- * @param {string} algorithm - The SHA algorithm to use (default is 'sha384').
- * @returns {string} - The SRI string in the format "algorithm-base64hash".
- */
-function computeSri(content, algorithm = 'sha384') {
-  const hash = createHash(algorithm)
-    .update(content)
-    .digest('base64');
-  return `${algorithm}-${hash}`;
+const DEFAULT_OPTIONS = {
+  algorithm: 'sha384',
+  bypassDomains: [],
+  crossorigin: 'anonymous',
+  debug: false
+};
+
+function log(message, options) {
+  if (options.debug) {
+    console.log(`[vite-plugin-sri4] ${message}`);
+  }
 }
 
-/**
- * Check if an external resource supports CORS.
- * It sends a HEAD request to the given URL and examines the "Access-Control-Allow-Origin" header.
- * Adjust the logic to match your security policy.
- * @param {string} url - The URL to check.
- * @returns {Promise<boolean>} - A promise that resolves to true if CORS is enabled.
- */
-async function externalResourceIsCorsEnabled(url) {
+function computeSri(content, algorithm = 'sha384') {
   try {
-    const response = await fetch(url, { method: 'HEAD' });
+    const hash = createHash(algorithm)
+      .update(content)
+      .digest('base64');
+    return `${algorithm}-${hash}`;
+  } catch (error) {
+    console.error(`[vite-plugin-sri4] Failed to compute SRI hash: ${error}`);
+    return null;
+  }
+}
+
+async function externalResourceIsCorsEnabled(url, options) {
+  try {
+    const response = await fetch(url, {
+      method: 'HEAD',
+      timeout: 5000 // 5 seconds timeout
+    });
     const acao = response.headers.get('access-control-allow-origin');
-    // Adjust the check as needed. This example allows "*" or domains including 'your-domain.com'.
-    if (acao && (acao === '*' || acao.includes('your-domain.com'))) {
+    if (acao && (acao === '*' || acao.includes(options.domain || ''))) {
       return true;
     }
     return false;
   } catch (error) {
-    console.warn(`Failed to fetch CORS headers from ${url}:`, error);
+    log(`Failed to fetch CORS headers from ${url}: ${error}`, options);
     return false;
   }
 }
 
-/**
- * Helper function to perform an asynchronous replacement in a string.
- * @param {string} str - The input string.
- * @param {RegExp} regex - The regular expression to match parts of the string.
- * @param {Function} asyncFn - An async function to compute the replacement.
- * @returns {Promise<string>} - The string with replaced values.
- */
 async function replaceAsync(str, regex, asyncFn) {
+  const promises = [];
   const matches = [];
+
   str.replace(regex, (...args) => {
     matches.push(args);
+    promises.push(asyncFn(...args));
     return '';
   });
-  for (const args of matches) {
-    const match = args[0];
-    const replacement = await asyncFn(...args);
-    str = str.replace(match, replacement);
+
+  const results = await Promise.all(promises);
+
+  let lastIndex = 0;
+  let result = '';
+
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i][0];
+    const index = str.indexOf(match, lastIndex);
+    result += str.slice(lastIndex, index) + results[i];
+    lastIndex = index + match.length;
   }
-  return str;
+
+  result += str.slice(lastIndex);
+  return result;
 }
 
-/**
- * Determines if the URL belongs to a domain specified in the bypassDomains array.
- * If so, the SRI injection will be skipped for that resource.
- * @param {string} url - The URL to check.
- * @param {Array<string>} bypassDomains - Array of domains to bypass SRI injection.
- * @returns {boolean} - True if the URL should bypass SRI injection.
- */
 function isBypassDomain(url, bypassDomains = []) {
   if (!bypassDomains.length) return false;
   try {
-    // If url starts with '//' assume default protocol 'http:'
-    const parsedUrl = url.startsWith('//') ? new URL(url, 'http://dummy') : new URL(url);
-    // Checks if the hostname ends with any of the bypass domains.
-    return bypassDomains.some((domain) => parsedUrl.hostname === domain || parsedUrl.hostname.endsWith(`.${domain}`));
+    const parsedUrl = url.startsWith('//')
+      ? new URL(url, 'http://dummy')
+      : new URL(url);
+    return bypassDomains.some(
+      (domain) => parsedUrl.hostname === domain ||
+                 parsedUrl.hostname.endsWith(`.${domain}`)
+    );
   } catch (e) {
     return false;
   }
 }
 
-/**
- * vite-plugin-sri4
- *
- * Plugin options:
- * - algorithm: The algorithm used to compute SRI hash (default: 'sha384').
- * - bypassDomains: Array of domains for which to skip injecting the integrity attribute.
- *
- * This plugin works during the build process:
- * 1. In the generateBundle hook, it calculates the SRI hash for all assets/chunks and stores them in sriMap.
- * 2. In the transformIndexHtml hook, it injects the integrity and crossorigin attributes into the HTML.
- *    For external links, it verifies via a CORS check if the resource supports cross-origin access.
- *
- * @param {Object} options - Plugin configuration options.
- * @returns {Object} - The Vite plugin.
- */
-export default function sri(options = {}) {
-  // Use the provided algorithm from options, defaulting to 'sha384' if not specified.
-  const algorithm = options.algorithm || 'sha384';
-  // Array for domains to bypass SRI injection.
-  const bypassDomains = options.bypassDomains || [];
-  // Map to store SRI hashes for assets; key is the file name.
-  const sriMap = {};
+export default function sri(userOptions = {}) {
+  const options = { ...DEFAULT_OPTIONS, ...userOptions };
+  const sriMap = new Map();
 
   return {
     name: 'vite-plugin-sri4',
     apply: 'build',
 
-    /**
-     * The generateBundle hook iterates through each asset or chunk in the bundle,
-     * computes its SRI hash, and stores it in the sriMap.
-     */
+    configResolved(config) {
+      options.domain = config.server?.host || '';
+    },
+
     async generateBundle(_, bundle) {
       for (const fileName in bundle) {
         const chunk = bundle[fileName];
         if (chunk.type === 'chunk' || chunk.type === 'asset') {
           const content = chunk.code || chunk.source;
           if (content) {
-            sriMap[fileName] = computeSri(content, algorithm);
-            console.log(`Computed SRI for ${fileName}: ${sriMap[fileName]}`);
+            const hash = computeSri(content, options.algorithm);
+            if (hash) {
+              sriMap.set(fileName, hash);
+              log(`Computed SRI for ${fileName}: ${hash}`, options);
+            }
           }
         }
       }
     },
 
-    /**
-     * The transformIndexHtml hook processes the generated HTML and injects the integrity and crossorigin attributes.
-     * For external resources, a CORS check is performed first.
-     * If the URL belongs to a bypass domain, the injection is skipped.
-     * @param {string} html - The HTML content to transform.
-     * @returns {Promise<string>} - The transformed HTML.
-     */
     async transformIndexHtml(html) {
-      // Determines if a URL is external by checking if it starts with http://, https://, or //
+      const hasIntegrity = (tag) => /integrity=/i.test(tag);
       const isExternalUrl = (url) => /^(https?:)?\/\//i.test(url);
 
-      // Process <script> tags.
-      html = await replaceAsync(
-        html,
-        /(<script[^>]+src="([^"]+)"[^>]*>)/g,
-        async (match, tag, src) => {
-          // Skip SRI injection for external URLs that are in the bypass list.
-          if (isExternalUrl(src) && isBypassDomain(src, bypassDomains)) {
-            console.log(`Skipping SRI injection for bypass domain: ${src}`);
-            return tag;
-          }
+      const processTag = async (match, tag, src, moduleSrc) => {
+        const actualSrc = src || moduleSrc;
 
-          if (isExternalUrl(src)) {
-            // For external links not bypassed, perform a CORS check.
-            const corsOk = await externalResourceIsCorsEnabled(src);
-            if (!corsOk) {
-              console.warn(`External resource ${src} does not support CORS. Skipping SRI injection.`);
-              return tag;
-            }
-          }
-          // For relative URLs or valid external URLs, use the file name as the key.
-          const fileName = src.startsWith('/') ? src.slice(1) : src;
-          if (sriMap[fileName]) {
-            return tag.replace(/>$/, ` integrity="${sriMap[fileName]}" crossorigin="anonymous">`);
-          }
+        if (hasIntegrity(tag)) {
           return tag;
         }
+
+        if (isExternalUrl(actualSrc) &&
+            isBypassDomain(actualSrc, options.bypassDomains)) {
+          log(`Skipping SRI injection for bypass domain: ${actualSrc}`, options);
+          return tag;
+        }
+
+        if (isExternalUrl(actualSrc)) {
+          const corsOk = await externalResourceIsCorsEnabled(actualSrc, options);
+          if (!corsOk) {
+            log(`External resource ${actualSrc} does not support CORS`, options);
+            return tag;
+          }
+        }
+
+        const fileName = actualSrc.startsWith('/') ? actualSrc.slice(1) : actualSrc;
+        const integrity = sriMap.get(fileName);
+
+        if (integrity) {
+          return tag.replace(
+            />$/,
+            ` integrity="${integrity}" crossorigin="${options.crossorigin}">`
+          );
+        }
+
+        return tag;
+      };
+
+      // Process scripts
+      html = await replaceAsync(
+        html,
+        /(<script[^>]+(?:src="([^"]+)"[^>]*|type="module"[^>]*src="([^"]+)"[^>]*)>)/g,
+        processTag
       );
 
-      // Process <link> tags.
+      // Process links
       html = await replaceAsync(
         html,
         /(<link[^>]+href="([^"]+)"[^>]*>)/g,
-        async (match, tag, href) => {
-          // Skip SRI injection for external URLs that are in the bypass list.
-          if (isExternalUrl(href) && isBypassDomain(href, bypassDomains)) {
-            console.log(`Skipping SRI injection for bypass domain: ${href}`);
-            return tag;
-          }
-
-          if (isExternalUrl(href)) {
-            // For external links not in the bypass list, perform a CORS check.
-            const corsOk = await externalResourceIsCorsEnabled(href);
-            if (!corsOk) {
-              console.warn(`External resource ${href} does not support CORS. Skipping SRI injection.`);
-              return tag;
-            }
-          }
-          const fileName = href.startsWith('/') ? href.slice(1) : href;
-          if (sriMap[fileName]) {
-            return tag.replace(/>$/, ` integrity="${sriMap[fileName]}" crossorigin="anonymous">`);
-          }
-          return tag;
-        }
+        processTag
       );
 
       return html;
