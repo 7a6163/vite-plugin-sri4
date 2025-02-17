@@ -152,6 +152,22 @@ describe('vite-plugin-sri4', () => {
       expect(result).not.toContain('integrity=');
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to compute SRI hash'));
     });
+
+    test('should handle processing errors with ignoreMissingAsset', async () => {
+      const plugin = sri({ ignoreMissingAsset: true });
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="error.js"></script>';
+      const bundle = {
+        'error.js': {
+          type: 'chunk',
+          code: new Error('Test error')
+        }
+      };
+
+      const result = await plugin.transformIndexHtml(html, { bundle });
+      expect(result).toBe(html);
+    });
   });
 
   describe('Missing Asset Handling', () => {
@@ -231,6 +247,32 @@ describe('vite-plugin-sri4', () => {
 
       const html = '<script src=":::invalid-url"></script>';
       const result = await plugin.transformIndexHtml(html, {});
+      expect(result).toBe(html);
+    });
+
+    test('should handle invalid URLs in bypass domain check', async () => {
+      const plugin = sri({
+        bypassDomains: ['example.com']
+      });
+      plugin.configResolved({ command: 'build' });
+
+      // Test with invalid URL that throws error when split
+      const html = '<script src=":::invalid-url"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle: {} });
+
+      expect(result).toBe(html);
+    });
+
+    test('should handle malformed URLs in bypass domain check', async () => {
+      const plugin = sri({
+        bypassDomains: ['example.com']
+      });
+      plugin.configResolved({ command: 'build' });
+
+      // Test with malformed URL that causes split error
+      const html = '<script src="http://"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle: {} });
+
       expect(result).toBe(html);
     });
   });
@@ -378,6 +420,21 @@ describe('vite-plugin-sri4', () => {
 
       expect(result).toBe(`<script src="/app/main.js" integrity="${mockHash}" crossorigin="anonymous"></script>`);
     });
+
+    test('should handle HTML transformation errors', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      // Mock bundle to throw error
+      const bundle = {
+        get: () => { throw new Error('Test error'); }
+      };
+
+      const html = '<script src="app.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+
+      expect(result).toBe(html);
+    });
   });
 
   describe('External Resources', () => {
@@ -426,6 +483,159 @@ describe('vite-plugin-sri4', () => {
       plugin.configResolved({ command: 'build' });
 
       const html = '<script src="https://example.com/script.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle: {} });
+
+      expect(result).toBe(html);
+    });
+
+    test('should handle external resource errors', async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('Network error'));
+
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="https://example.com/script.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle: {} });
+
+      expect(result).toBe(html);
+    });
+  });
+
+  describe('Error Handling', () => {
+    test('should handle processing errors with ignoreMissingAsset', async () => {
+      const plugin = sri({ ignoreMissingAsset: true });
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="error.js"></script>';
+      const bundle = {
+        'error.js': {
+          type: 'chunk',
+          code: new Error('Test error')
+        }
+      };
+
+      const result = await plugin.transformIndexHtml(html, { bundle });
+      expect(result).toBe(html);
+    });
+
+    test('should handle HTML transformation errors', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      // Mock bundle to throw error
+      const bundle = {
+        get: () => { throw new Error('Test error'); }
+      };
+
+      const html = '<script src="app.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+
+      expect(result).toBe(html);
+    });
+
+    test('should handle external resource errors', async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('Network error'));
+
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="https://example.com/script.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle: {} });
+
+      expect(result).toBe(html);
+    });
+
+    test('should handle bundle processing errors', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="error.js"></script>';
+      const bundle = {
+        'error.js': {
+          type: 'chunk',
+          get code() {
+            throw new Error('Test error');
+          }
+        }
+      };
+
+      const result = await plugin.transformIndexHtml(html, { bundle });
+      expect(result).toBe(html);
+    });
+
+    test('should handle bundle item source errors', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="error.js"></script>';
+      const bundle = {
+        'error.js': {
+          type: 'asset',
+          get source() {
+            throw new Error('Test error');
+          }
+        }
+      };
+
+      const result = await plugin.transformIndexHtml(html, { bundle });
+      expect(result).toBe(html);
+    });
+
+    test('should handle fetch errors for external resources', async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error('Network error'));
+
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="https://example.com/script.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle: {} });
+
+      expect(result).toBe(html);
+    });
+
+    test('should handle fetch response errors for external resources', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        headers: {
+          get: () => '*'
+        }
+      });
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        arrayBuffer: () => Promise.reject(new Error('Test error'))
+      });
+
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src="https://example.com/script.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle: {} });
+
+      expect(result).toBe(html);
+    });
+
+    test('should handle plugin errors gracefully', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      // Mock bundle to throw error on access
+      const bundle = new Proxy({}, {
+        get: () => { throw new Error('Test error'); }
+      });
+
+      const html = '<script src="app.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+
+      expect(result).toBe(html);
+    });
+
+    test('should handle severe errors in bypass domain check', async () => {
+      const plugin = sri({
+        bypassDomains: ['example.com']
+      });
+      plugin.configResolved({ command: 'build' });
+
+      // Create a URL that causes split to throw
+      const html = '<script src="' + String.fromCharCode(0) + '"></script>';
       const result = await plugin.transformIndexHtml(html, { bundle: {} });
 
       expect(result).toBe(html);
