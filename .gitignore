@@ -38,6 +38,10 @@ pnpm-debug.log*
 # Coverage directory used by tools like istanbul
 coverage/
 
+# Example
+example/node_modules/
+example/dist/
+
 # Temporary files
 *.tmp
 
