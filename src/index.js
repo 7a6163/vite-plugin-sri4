@@ -7,7 +7,8 @@ const DEFAULT_OPTIONS = {
   algorithm: 'sha384',
   bypassDomains: [],
   crossorigin: 'anonymous',
-  debug: false
+  debug: false,
+  inlineScripts: false
 };
 
 function log(message, options) {
@@ -18,6 +19,9 @@ function log(message, options) {
 
 function computeSri(content, algorithm = 'sha384') {
   try {
+    if (typeof content === 'string') {
+      content = Buffer.from(content, 'utf-8');
+    }
     const hash = createHash(algorithm)
       .update(content)
       .digest('base64');
@@ -47,14 +51,21 @@ async function externalResourceIsCorsEnabled(url, options) {
 function isBypassDomain(url, bypassDomains = []) {
   if (!bypassDomains.length) return false;
   try {
-    const parsedUrl = url.startsWith('//')
-      ? new URL(`http:${url}`)
-      : new URL(url, 'http://dummy');
+    let parsedUrl;
+    if (url.startsWith('//')) {
+      parsedUrl = new URL(`http:${url}`);
+    } else if (url.startsWith('http://') || url.startsWith('https://')) {
+      parsedUrl = new URL(url);
+    } else {
+      parsedUrl = new URL(url, 'http://dummy');
+    }
+
     return bypassDomains.some(
       (domain) => parsedUrl.hostname === domain ||
                  parsedUrl.hostname.endsWith(`.${domain}`)
     );
   } catch (e) {
+    console.error(`${LOG_PREFIX} Failed to parse URL: ${url}`, e);
     return false;
   }
 }
@@ -150,6 +161,29 @@ async function processTag(tag, url, options, sriMap) {
   return tag;
 }
 
+async function processInlineScript(tag, options) {
+  if (tag.includes('integrity=')) {
+    log(`Skip inline script with existing integrity attribute: ${tag}`, options);
+    return tag;
+  }
+
+  const content = tag.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1]?.trim();
+  if (!content) {
+    log(`Skip empty inline script: ${tag}`, options);
+    return tag;
+  }
+
+  const hash = computeSri(content, options.algorithm);
+  if (hash) {
+    log(`Computing SRI for inline script: ${hash}`, options);
+    const newTag = tag.replace('>', ` integrity="${hash}">`);
+    log(`New inline script tag: ${newTag}`, options);
+    return newTag;
+  }
+
+  return tag;
+}
+
 export default function sri(userOptions = {}) {
   const options = { ...DEFAULT_OPTIONS, ...userOptions };
   const sriMap = new Map();
@@ -219,6 +253,16 @@ export default function sri(userOptions = {}) {
           log(`Processing script: ${url}`, options);
           const newTag = await processTag(tag, url, options, sriMap);
           html = html.replace(tag, newTag);
+        }
+
+        // Process inline scripts if enabled
+        if (options.inlineScripts) {
+          const inlineScripts = html.match(/<script[^>]*>([^<]+)<\/script>/g) || [];
+          log(`Found ${inlineScripts.length} inline script tags`, options);
+          for (const tag of inlineScripts) {
+            const newTag = await processInlineScript(tag, options);
+            html = html.replace(tag, newTag);
+          }
         }
 
         // Process link tags
