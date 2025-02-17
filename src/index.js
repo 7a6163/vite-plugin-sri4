@@ -85,9 +85,21 @@ function getAllPossiblePaths(url) {
     url.replace(/^static\//, '')
   ];
 
-  const withoutHash = url.replace(/-[a-zA-Z0-9]+\./, '.');
+  // Handle Vite's hashed filenames (e.g., index-DPifqqS2.js -> index.js)
+  const withoutHash = url.replace(/-[a-zA-Z0-9]{8}\./, '.');
   if (withoutHash !== url) {
     paths.push(...getAllPossiblePaths(withoutHash));
+  }
+
+  // Handle variations with and without /static/ prefix for hashed files
+  const hashedMatch = url.match(/^(?:\/static\/)?(.*?)-[a-zA-Z0-9]{8}(\..*?)$/);
+  if (hashedMatch) {
+    const [, base, ext] = hashedMatch;
+    paths.push(
+      `${base}${ext}`,
+      `/static/${base}${ext}`,
+      `static/${base}${ext}`
+    );
   }
 
   return [...new Set(paths)];
@@ -138,6 +150,9 @@ async function processTag(tag, url, options, sriMap) {
   let integrity = null;
 
   log(`Checking possible paths for ${url}:`, options);
+  log(`Possible paths:`, options);
+  possiblePaths.forEach(path => log(`  - ${path}`, options));
+
   for (const path of possiblePaths) {
     log(`- Checking path: ${path}`, options);
     if (sriMap.has(path)) {
