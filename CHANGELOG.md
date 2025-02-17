@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.6] - 2025-02-17
+
+### Features
+
+- Added `ignoreMissingAsset` option to suppress warnings for missing assets
+- Added example project for demonstration and testing
+- Improved content type handling for different asset formats (string, Buffer, Uint8Array)
+
+### Improvements
+
+- Enhanced URL parsing for bypass domains
+- Better error handling and logging
+- Improved test coverage to 100%
+- Removed TypeScript type annotations for better compatibility
+
 ## [1.8.5] - 2025-02-17
 
 ### Improvements
