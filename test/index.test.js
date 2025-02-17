@@ -42,7 +42,8 @@ describe('vite-plugin-sri4', () => {
     test('should merge user options with defaults', () => {
       const userOptions = {
         algorithm: 'sha256',
-        debug: true
+        debug: true,
+        ignoreMissingAsset: true
       };
       const plugin = sri(userOptions);
       const configResult = plugin.configResolved({ command: 'build' });
@@ -74,6 +75,7 @@ describe('vite-plugin-sri4', () => {
       await plugin.transformIndexHtml(html, { bundle });
 
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[vite-plugin-sri4]'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('ignoreMissingAsset: false'));
     });
 
     test('should not log when debug is false', () => {
@@ -81,6 +83,155 @@ describe('vite-plugin-sri4', () => {
       const plugin = sri({ debug: false });
       plugin.configResolved({ command: 'build' });
       expect(consoleSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Content Type Handling', () => {
+    test('should handle string content', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const bundle = {
+        'test.js': {
+          type: 'chunk',
+          code: 'console.log("test")'
+        }
+      };
+
+      const html = '<script src="test.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+      expect(result).toContain('integrity="sha384-mocked-hash-value"');
+    });
+
+    test('should handle Buffer content', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const bundle = {
+        'test.js': {
+          type: 'chunk',
+          code: Buffer.from('test')
+        }
+      };
+
+      const html = '<script src="test.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+      expect(result).toContain('integrity="sha384-mocked-hash-value"');
+    });
+
+    test('should handle Uint8Array content', async () => {
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const bundle = {
+        'test.js': {
+          type: 'chunk',
+          code: new Uint8Array([1, 2, 3])
+        }
+      };
+
+      const html = '<script src="test.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+      expect(result).toContain('integrity="sha384-mocked-hash-value"');
+    });
+
+    test('should handle invalid content type', async () => {
+      const consoleSpy = vi.spyOn(console, 'error');
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const bundle = {
+        'test.js': {
+          type: 'chunk',
+          code: { invalid: 'type' }
+        }
+      };
+
+      const html = '<script src="test.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+      expect(result).not.toContain('integrity=');
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to compute SRI hash'));
+    });
+  });
+
+  describe('Missing Asset Handling', () => {
+    test('should warn on missing asset by default', async () => {
+      const consoleSpy = vi.spyOn(console, 'warn');
+      const plugin = sri();
+      plugin.configResolved({ command: 'build' });
+
+      const bundle = {};
+      const html = '<script src="missing.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+
+      expect(result).toBe(html);
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Asset not found in bundle: missing.js'));
+    });
+
+    test('should ignore missing asset when ignoreMissingAsset is true', async () => {
+      const consoleSpy = vi.spyOn(console, 'warn');
+      const plugin = sri({ ignoreMissingAsset: true });
+      plugin.configResolved({ command: 'build' });
+
+      const bundle = {};
+      const html = '<script src="missing.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+
+      expect(result).toBe(html);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    test('should handle processing errors with ignoreMissingAsset', async () => {
+      const consoleSpy = vi.spyOn(console, 'error');
+      const plugin = sri({ ignoreMissingAsset: true });
+      plugin.configResolved({ command: 'build' });
+
+      const bundle = {
+        'error.js': {
+          type: 'chunk',
+          code: null
+        }
+      };
+
+      const html = '<script src="error.js"></script>';
+      const result = await plugin.transformIndexHtml(html, { bundle });
+
+      expect(result).toBe(html);
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Bypass Domain Handling', () => {
+    test('should handle various URL formats', async () => {
+      const plugin = sri({
+        bypassDomains: ['example.com', 'test.com']
+      });
+      plugin.configResolved({ command: 'build' });
+
+      const urls = [
+        'http://example.com/script.js',
+        'https://sub.example.com/script.js',
+        '//test.com/script.js',
+        'test.com/script.js',
+        'test.com:8080/script.js'
+      ];
+
+      for (const url of urls) {
+        const html = `<script src="${url}"></script>`;
+        const result = await plugin.transformIndexHtml(html, {});
+        expect(result).toBe(html);
+      }
+    });
+
+    test('should handle invalid URLs', async () => {
+      const plugin = sri({
+        bypassDomains: ['example.com']
+      });
+      plugin.configResolved({ command: 'build' });
+
+      const html = '<script src=":::invalid-url"></script>';
+      const result = await plugin.transformIndexHtml(html, {});
+      expect(result).toBe(html);
     });
   });
 
@@ -216,16 +367,16 @@ describe('vite-plugin-sri4', () => {
       plugin.configResolved({ command: 'build', base: '/app/' });
 
       const bundle = {
-        'app.js': {
+        'main.js': {
           type: 'chunk',
           code: 'console.log("test")'
         }
       };
 
-      const html = '<script src="/app/app.js"></script>';
+      const html = '<script src="/app/main.js"></script>';
       const result = await plugin.transformIndexHtml(html, { bundle });
 
-      expect(result).toBe(`<script src="/app/app.js" integrity="${mockHash}" crossorigin="anonymous"></script>`);
+      expect(result).toBe(`<script src="/app/main.js" integrity="${mockHash}" crossorigin="anonymous"></script>`);
     });
   });
 
@@ -246,12 +397,10 @@ describe('vite-plugin-sri4', () => {
       const plugin = sri();
       plugin.configResolved({ command: 'build' });
 
-      const html = '<script src="https://example.com/app.js"></script>';
+      const html = '<script src="https://example.com/script.js"></script>';
       const result = await plugin.transformIndexHtml(html, { bundle: {} });
 
-      expect(result).toBe(
-        `<script src="https://example.com/app.js" integrity="${mockHash}" crossorigin="anonymous"></script>`
-      );
+      expect(result).toBe(`<script src="https://example.com/script.js" integrity="${mockHash}" crossorigin="anonymous"></script>`);
     });
 
     test('should skip external resources without CORS', async () => {
@@ -264,7 +413,7 @@ describe('vite-plugin-sri4', () => {
       const plugin = sri();
       plugin.configResolved({ command: 'build' });
 
-      const html = '<script src="https://example.com/app.js"></script>';
+      const html = '<script src="https://example.com/script.js"></script>';
       const result = await plugin.transformIndexHtml(html, { bundle: {} });
 
       expect(result).toBe(html);
@@ -276,7 +425,7 @@ describe('vite-plugin-sri4', () => {
       });
       plugin.configResolved({ command: 'build' });
 
-      const html = '<script src="https://example.com/app.js"></script>';
+      const html = '<script src="https://example.com/script.js"></script>';
       const result = await plugin.transformIndexHtml(html, { bundle: {} });
 
       expect(result).toBe(html);
