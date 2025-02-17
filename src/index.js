@@ -45,7 +45,7 @@ async function externalResourceIsCorsEnabled(url, options) {
     }
     return false;
   } catch (error) {
-    log(`Failed to fetch CORS headers from ${url}: ${error}`, options);
+    console.error(`${LOG_PREFIX} Failed to fetch CORS headers from ${url}`, error);
     return false;
   }
 }
@@ -207,6 +207,8 @@ export default function sri(userOptions = {}) {
   const options = { ...DEFAULT_OPTIONS, ...userOptions };
   let isBuild = false;
   let base = '';
+  const htmlFiles = new Map(); // Store HTML file info for processing
+  const sriCache = new Map(); // Cache SRI hashes
 
   return {
     name: 'vite-plugin-sri4',
@@ -218,49 +220,151 @@ export default function sri(userOptions = {}) {
       isBuild = config.command === 'build';
       base = config.base || '';
       log('Plugin configured in ' + (isBuild ? 'build' : 'dev') + ' mode', options);
-      log(`Base URL: ${base}`, options);
-      log(`ignoreMissingAsset: ${options.ignoreMissingAsset}`, options);
     },
 
     async transformIndexHtml(html, ctx) {
       if (!isBuild || !html) {
-        log('Skipping HTML transform in dev mode or empty HTML', options);
         return html;
       }
 
-      try {
-        log('Starting HTML transformation', options);
-        const bundle = ctx.bundle || {};
-        log(`Bundle size: ${Object.keys(bundle).length}`, options);
+      // Store HTML file info for later processing
+      const resourceTags = [];
 
-        // Process script tags with and without quotes
-        const scriptTagRegex = /<script[^>]+src=(?:["']([^"']+)["']|([^ >]+))[^>]*>/g;
-        let match;
-        while ((match = scriptTagRegex.exec(html)) !== null) {
-          const [tag, quotedUrl, unquotedUrl] = match;
-          const url = quotedUrl || unquotedUrl;
-          log(`Processing script: ${url}`, options);
-          const newTag = await processTag(tag, url, options, bundle, base);
-          html = html.replace(tag, newTag);
+      // Find script tags
+      const scriptTagRegex = /<script[^>]+src=(?:["']([^"']+)["']|([^ >]+))[^>]*>/g;
+      let match;
+      while ((match = scriptTagRegex.exec(html)) !== null) {
+        const [tag, quotedUrl, unquotedUrl] = match;
+        resourceTags.push({
+          tag,
+          url: quotedUrl || unquotedUrl,
+          type: 'script'
+        });
+      }
+
+      // Find link tags
+      const linkTagRegex = /<link[^>]+href=(?:["']([^"']+)["']|([^ >]+))[^>]*>/g;
+      while ((match = linkTagRegex.exec(html)) !== null) {
+        const [tag, quotedUrl, unquotedUrl] = match;
+        if (tag.includes('stylesheet') || tag.includes('modulepreload')) {
+          resourceTags.push({
+            tag,
+            url: quotedUrl || unquotedUrl,
+            type: 'link'
+          });
         }
+      }
 
-        // Process link tags with and without quotes
-        const linkTagRegex = /<link[^>]+href=(?:["']([^"']+)["']|([^ >]+))[^>]*>/g;
-        while ((match = linkTagRegex.exec(html)) !== null) {
-          const [tag, quotedUrl, unquotedUrl] = match;
-          const url = quotedUrl || unquotedUrl;
-          if (tag.includes('stylesheet') || tag.includes('modulepreload')) {
-            log(`Processing link: ${url}`, options);
-            const newTag = await processTag(tag, url, options, bundle, base);
-            html = html.replace(tag, newTag);
+      // Store HTML file info
+      htmlFiles.set(ctx.filename, {
+        content: html,
+        resources: resourceTags
+      });
+
+      return html;
+    },
+
+    async writeBundle(options, bundle) {
+      for (const [filename, htmlInfo] of htmlFiles) {
+        let content = htmlInfo.content;
+
+        // Process all resources in parallel
+        const updates = await Promise.all(
+          htmlInfo.resources.map(async ({ tag, url, type }) => {
+            if (tag.includes('integrity=')) {
+              return null;
+            }
+
+            // Handle external resources
+            if (/^(https?:)?\/\//i.test(url)) {
+              if (isBypassDomain(url, options.bypassDomains)) {
+                return null;
+              }
+
+              // Check cache first
+              if (sriCache.has(url)) {
+                return {
+                  tag,
+                  newTag: sriCache.get(url)
+                };
+              }
+
+              const corsOk = await externalResourceIsCorsEnabled(url, options);
+              if (!corsOk) {
+                return null;
+              }
+
+              try {
+                const response = await fetch(url);
+                const content = await response.arrayBuffer();
+                const hash = computeSri(Buffer.from(content), options.algorithm);
+                if (hash) {
+                  const hasCrossOrigin = hasCrossOriginAttr(tag);
+                  const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
+                  const newTag = tag.replace(/>$/, ` integrity="${hash}"${crossOriginAttr}>`);
+                  sriCache.set(url, newTag);
+                  return { tag, newTag };
+                }
+              } catch (error) {
+                log(`Failed to process external resource ${url}: ${error}`, options);
+              }
+              return null;
+            }
+
+            // Handle local resources
+            const possibleKeys = getBundleKey(url, base);
+            let bundleItem = null;
+
+            for (const key of possibleKeys) {
+              if (bundle[key]) {
+                bundleItem = bundle[key];
+                break;
+              }
+            }
+
+            if (!bundleItem) {
+              if (!options.ignoreMissingAsset) {
+                console.warn(`${LOG_PREFIX} Asset not found in bundle: ${url}`);
+              }
+              return null;
+            }
+
+            try {
+              const source = bundleItem.type === 'chunk' ? bundleItem.code : bundleItem.source;
+              const integrity = computeSri(source, options.algorithm);
+
+              if (integrity) {
+                const hasCrossOrigin = hasCrossOriginAttr(tag);
+                const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
+                const newTag = tag.replace(/>$/, ` integrity="${integrity}"${crossOriginAttr}>`);
+                return { tag, newTag };
+              }
+            } catch (error) {
+              if (!options.ignoreMissingAsset) {
+                console.error(`${LOG_PREFIX} Failed to process asset: ${url}`, error);
+              }
+            }
+
+            return null;
+          })
+        );
+
+        // Apply all updates to the HTML content
+        updates.forEach(update => {
+          if (update) {
+            content = content.replace(update.tag, update.newTag);
           }
-        }
+        });
 
-        return html;
-      } catch (error) {
-        console.error(`${LOG_PREFIX} Failed to transform HTML: ${error}`);
-        return html;
+        // Write the modified content back to the bundle
+        if (bundle[filename]) {
+          bundle[filename].source = content;
+        }
       }
+
+      // Clear the caches
+      htmlFiles.clear();
+      sriCache.clear();
     }
   };
 }
