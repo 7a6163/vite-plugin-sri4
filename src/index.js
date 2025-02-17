@@ -7,7 +7,8 @@ const DEFAULT_OPTIONS = {
   algorithm: 'sha384',
   bypassDomains: [],
   crossorigin: 'anonymous',
-  debug: false
+  debug: false,
+  ignoreMissingAsset: false
 };
 
 function log(message, options) {
@@ -52,12 +53,22 @@ async function externalResourceIsCorsEnabled(url, options) {
 function isBypassDomain(url, bypassDomains = []) {
   if (!bypassDomains.length) return false;
   try {
-    const parsedUrl = url.startsWith('//')
-      ? new URL(`http:${url}`)
-      : new URL(url, 'http://dummy');
-    return bypassDomains.some(
-      (domain) => parsedUrl.hostname === domain ||
-                 parsedUrl.hostname.endsWith(`.${domain}`)
+    let hostname = url;
+
+    if (hostname.startsWith('http://')) {
+      hostname = hostname.slice(7);
+    } else if (hostname.startsWith('https://')) {
+      hostname = hostname.slice(8);
+    } else if (hostname.startsWith('//')) {
+      hostname = hostname.slice(2);
+    }
+
+    hostname = hostname.split('/')[0];
+
+    hostname = hostname.split(':')[0];
+
+    return bypassDomains.some(domain =>
+      hostname === domain || hostname.endsWith(`.${domain}`)
     );
   } catch (e) {
     return false;
@@ -151,8 +162,14 @@ async function processTag(tag, url, options, bundle, base = '') {
   }
 
   if (!bundleItem) {
-    log(`Available bundle keys:`, options);
-    Object.keys(bundle).forEach(key => log(`- ${key}`, options));
+    log(`Bundle item not found for ${url}`, options);
+    if (!options.ignoreMissingAsset) {
+      console.warn(`${LOG_PREFIX} Asset not found in bundle: ${url}`);
+      log(`Available bundle keys:`, options);
+      Object.keys(bundle).forEach(key => log(`- ${key}`, options));
+    } else {
+      log(`Ignoring missing asset due to ignoreMissingAsset option`, options);
+    }
     return tag;
   }
 
@@ -178,6 +195,9 @@ async function processTag(tag, url, options, bundle, base = '') {
     }
   } catch (error) {
     log(`Error processing bundle item: ${error}`, options);
+    if (!options.ignoreMissingAsset) {
+      console.error(`${LOG_PREFIX} Failed to process asset: ${url}`, error);
+    }
   }
 
   return tag;
@@ -199,6 +219,7 @@ export default function sri(userOptions = {}) {
       base = config.base || '';
       log('Plugin configured in ' + (isBuild ? 'build' : 'dev') + ' mode', options);
       log(`Base URL: ${base}`, options);
+      log(`ignoreMissingAsset: ${options.ignoreMissingAsset}`, options);
     },
 
     async transformIndexHtml(html, ctx) {
