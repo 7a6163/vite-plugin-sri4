@@ -18,10 +18,15 @@ function log(message, options) {
 
 function computeSri(content, algorithm = 'sha384') {
   try {
-    const hash = createHash(algorithm)
-      .update(content)
-      .digest('base64');
-    return `${algorithm}-${hash}`;
+    const hash = createHash(algorithm);
+    if (Buffer.isBuffer(content) || content instanceof Uint8Array) {
+      hash.update(content);
+    } else if (typeof content === 'string') {
+      hash.update(Buffer.from(content, 'utf-8'));
+    } else {
+      throw new Error('Invalid content type');
+    }
+    return `${algorithm}-${hash.digest('base64')}`;
   } catch (error) {
     console.error(`${LOG_PREFIX} Failed to compute SRI hash: ${error}`);
     return null;
@@ -64,23 +69,29 @@ function hasCrossOriginAttr(tag) {
 }
 
 function getBundleKey(url, base = '') {
-  // 嘗試各種可能的路徑格式
-  const possiblePaths = [
-    url,
-    url.replace(/^\//, ''),
-    url.replace(/^\/static\//, ''),
-    url.replace(/^static\//, ''),
-    url.replace(base, ''),
-    url.replace(base, '').replace(/^\//, '')
+  // Remove base prefix if exists
+  let cleanUrl = url.startsWith(base) ? url.slice(base.length) : url;
+  // Remove leading slash
+  cleanUrl = cleanUrl.startsWith('/') ? cleanUrl.slice(1) : cleanUrl;
+
+  // Try different path combinations
+  const paths = [
+    cleanUrl,
+    `static/${cleanUrl}`,
+    cleanUrl.replace(/^static\//, '')
   ];
 
-  // 移除 hash 後的版本
-  const withoutHash = url.replace(/-[a-zA-Z0-9]+\.([^.]+)$/, '.$1');
-  if (withoutHash !== url) {
-    possiblePaths.push(...getBundleKey(withoutHash, base));
+  // Remove hash part if exists and try again
+  const withoutHash = cleanUrl.replace(/-[a-zA-Z0-9]+\.([^.]+)$/, '.$1');
+  if (withoutHash !== cleanUrl) {
+    paths.push(...[
+      withoutHash,
+      `static/${withoutHash}`,
+      withoutHash.replace(/^static\//, '')
+    ]);
   }
 
-  return [...new Set(possiblePaths)];
+  return [...new Set(paths)];
 }
 
 async function processTag(tag, url, options, bundle, base = '') {
@@ -126,6 +137,10 @@ async function processTag(tag, url, options, bundle, base = '') {
   // Handle local resources
   const possibleKeys = getBundleKey(url, base);
   let bundleItem = null;
+  let source;
+
+  log(`Looking for bundle keys:`, options);
+  possibleKeys.forEach(key => log(`- ${key}`, options));
 
   for (const key of possibleKeys) {
     if (bundle[key]) {
@@ -135,8 +150,23 @@ async function processTag(tag, url, options, bundle, base = '') {
     }
   }
 
-  if (bundleItem) {
-    const source = bundleItem.type === 'chunk' ? bundleItem.code : bundleItem.source;
+  if (!bundleItem) {
+    log(`Available bundle keys:`, options);
+    Object.keys(bundle).forEach(key => log(`- ${key}`, options));
+    return tag;
+  }
+
+  log(`Bundle item type: ${bundleItem.type}`, options);
+
+  try {
+    if (bundleItem.type === 'chunk') {
+      source = bundleItem.code;
+      log(`Processing chunk content of length: ${source.length}`, options);
+    } else {
+      source = bundleItem.source;
+      log(`Processing asset content of length: ${source.length}`, options);
+    }
+
     const integrity = computeSri(source, options.algorithm);
     if (integrity) {
       log(`Computing SRI for local resource ${url}: ${integrity}`, options);
@@ -146,9 +176,8 @@ async function processTag(tag, url, options, bundle, base = '') {
       log(`New tag: ${newTag}`, options);
       return newTag;
     }
-  } else {
-    log(`No bundle item found for ${url}`, options);
-    log(`Available bundle keys: ${Object.keys(bundle).join(', ')}`, options);
+  } catch (error) {
+    log(`Error processing bundle item: ${error}`, options);
   }
 
   return tag;
