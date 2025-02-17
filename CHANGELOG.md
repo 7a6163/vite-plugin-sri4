@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.5] - 2025-02-17
+
+### Improvements
+
+- Added .npmignore to exclude development files from npm package
+- Optimized package size by excluding example directory and development configs
+
+## [1.8.4] - 2025-02-17
+
+### Features
+
+- Added example project to demonstrate plugin usage with Vite
+- Improved TypeScript support for content type handling
+- Enhanced debug logging for bundle processing
+
+### Improvements
+
+- Better handling of different content types (string, Buffer, Uint8Array)
+- Optimized bundle key resolution for hashed filenames
+- Added detailed debug logging for bundle item processing
+
 ## [1.8.3] - 2025-02-17
 
 ### Breaking Changes
