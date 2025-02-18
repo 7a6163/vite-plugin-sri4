@@ -1,370 +1,183 @@
-import { createHash } from 'node:crypto';
-import fetch from 'cross-fetch';
+import { createHash } from 'crypto'
+import path from 'path'
+import fetch from 'cross-fetch'
 
-const LOG_PREFIX = '[vite-plugin-sri4]';
-
-const DEFAULT_OPTIONS = {
-  algorithm: 'sha384',
-  bypassDomains: [],
-  crossorigin: 'anonymous',
-  debug: false,
-  ignoreMissingAsset: false
-};
-
-function log(message, options) {
-  if (options.debug) {
-    console.log(`${LOG_PREFIX} ${message}`);
+const VITE_INTERNAL_ANALYSIS_PLUGIN = 'vite:build-import-analysis'
+const HTML_PATTERNS = {
+  script: {
+    regex: /<script[^<>]*['"]*src['"]*=['"]*([^ '"]+)['"]*[^<>]*><\/script>/g,
+    endOffset: 10
+  },
+  stylesheet: {
+    regex: /<link[^<>]*['"]*rel['"]*=['"]*stylesheet['"]*[^<>]+['"]*href['"]*=['"]([^^ '"]+)['"][^<>]*>/g,
+    endOffset: 1
+  },
+  modulepreload: {
+    regex: /<link[^<>]*['"]*rel['"]*=['"]*modulepreload['"]*[^<>]+['"]*href['"]*=['"]([^^ '"]+)['"][^<>]*>/g,
+    endOffset: 1
   }
 }
 
-function computeSri(content, algorithm = 'sha384') {
+const urlSupportCache = new Map()
+
+function isUrlFromBypassDomain(url, bypassDomains = []) {
+  if (!url.startsWith('http')) return false
   try {
-    const hash = createHash(algorithm);
-    if (Buffer.isBuffer(content) || content instanceof Uint8Array) {
-      hash.update(content);
-    } else if (typeof content === 'string') {
-      hash.update(Buffer.from(content, 'utf-8'));
-    } else {
-      throw new Error('Invalid content type');
-    }
-    return `${algorithm}-${hash.digest('base64')}`;
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Failed to compute SRI hash: ${error}`);
-    return null;
+    const urlObj = new URL(url)
+    return bypassDomains.some(domain =>
+      urlObj.hostname === domain || urlObj.hostname.endsWith(`.${domain}`)
+    )
+  } catch {
+    return false
   }
 }
 
-async function externalResourceIsCorsEnabled(url, options) {
+async function checkResourceSupport(url) {
+  if (urlSupportCache.has(url)) {
+    return urlSupportCache.get(url)
+  }
+
   try {
     const response = await fetch(url, {
-      method: 'HEAD'
-    });
-    const acao = response.headers.get('access-control-allow-origin');
-    if (acao && (acao === '*' || acao.includes(options.domain || ''))) {
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Failed to fetch CORS headers from ${url}`, error);
-    return false;
+      method: 'HEAD',
+      timeout: 5000
+    })
+    const corsHeader = response.headers.get('access-control-allow-origin')
+    const isSupported = response.ok && (corsHeader === '*' || corsHeader?.includes('*'))
+    urlSupportCache.set(url, isSupported)
+    return isSupported
+  } catch {
+    urlSupportCache.set(url, false)
+    return false
   }
 }
 
-function isBypassDomain(url, bypassDomains = []) {
-  if (!bypassDomains.length) return false;
+async function fetchResource(url) {
   try {
-    let hostname = url;
-
-    if (hostname.startsWith('http://')) {
-      hostname = hostname.slice(7);
-    } else if (hostname.startsWith('https://')) {
-      hostname = hostname.slice(8);
-    } else if (hostname.startsWith('//')) {
-      hostname = hostname.slice(2);
-    }
-
-    hostname = hostname.split('/')[0];
-
-    hostname = hostname.split(':')[0];
-
-    return bypassDomains.some(domain =>
-      hostname === domain || hostname.endsWith(`.${domain}`)
-    );
-  } catch (e) {
-    return false;
+    const response = await fetch(url, { timeout: 5000 })
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    return new Uint8Array(await response.arrayBuffer())
+  } catch (error) {
+    console.warn(`[vite-plugin-sri4] Failed to fetch external resource: ${url}`, error)
+    return null
   }
 }
 
-function hasCrossOriginAttr(tag) {
-  return /(?:^|\s)crossorigin(?:=["']?[^"'\s>]*["']?)?(?:\s|>|$)/i.test(tag);
-}
+function createTransformer(options, config) {
+  const { ignoreMissingAsset, bypassDomains, hashAlgorithm = 'sha384' } = options
 
-function getBundleKey(url, base = '') {
-  // Remove base prefix if exists
-  let cleanUrl = url.startsWith(base) ? url.slice(base.length) : url;
-  // Remove leading slash
-  cleanUrl = cleanUrl.startsWith('/') ? cleanUrl.slice(1) : cleanUrl;
-
-  // Try different path combinations
-  const paths = [
-    cleanUrl,
-    `static/${cleanUrl}`,
-    cleanUrl.replace(/^static\//, '')
-  ];
-
-  // Remove hash part if exists and try again
-  const withoutHash = cleanUrl.replace(/-[a-zA-Z0-9]+\.([^.]+)$/, '.$1');
-  if (withoutHash !== cleanUrl) {
-    paths.push(...[
-      withoutHash,
-      `static/${withoutHash}`,
-      withoutHash.replace(/^static\//, '')
-    ]);
+  const getBundleKey = (htmlPath, url) => {
+    if (config.base === './' || config.base === '') {
+      return path.posix.resolve(htmlPath, url)
+    }
+    return url.replace(config.base, '')
   }
 
-  return [...new Set(paths)];
-}
-
-async function processTag(tag, url, options, bundle, base = '') {
-  if (tag.includes('integrity=')) {
-    log(`Skip tag with existing integrity attribute: ${tag}`, options);
-    return tag;
-  }
-
-  log(`Processing tag: ${tag}`, options);
-  log(`URL: ${url}`, options);
-
-  // Handle external resources
-  if (/^(https?:)?\/\//i.test(url)) {
-    if (isBypassDomain(url, options.bypassDomains)) {
-      log(`Skip SRI for bypass domain: ${url}`, options);
-      return tag;
+  const calculateIntegrity = async (bundle, htmlPath, url) => {
+    if (isUrlFromBypassDomain(url, bypassDomains)) {
+      return null
     }
 
-    const corsOk = await externalResourceIsCorsEnabled(url, options);
-    if (!corsOk) {
-      log(`External resource ${url} does not support CORS`, options);
-      return tag;
-    }
-
-    try {
-      const response = await fetch(url);
-      const content = await response.arrayBuffer();
-      const hash = computeSri(Buffer.from(content), options.algorithm);
-      if (hash) {
-        log(`Computing SRI for external resource ${url}: ${hash}`, options);
-        const hasCrossOrigin = hasCrossOriginAttr(tag);
-        const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
-        const newTag = tag.replace(/>$/, ` integrity="${hash}"${crossOriginAttr}>`);
-        log(`New tag: ${newTag}`, options);
-        return newTag;
+    let source
+    if (url.startsWith('http')) {
+      const isSupported = await checkResourceSupport(url)
+      if (!isSupported) return null
+      source = await fetchResource(url)
+      if (!source) return null
+    } else {
+      const bundleItem = bundle[getBundleKey(htmlPath, url)]
+      if (!bundleItem) {
+        if (ignoreMissingAsset) return null
+        throw new Error(`Asset ${url} not found in bundle`)
       }
-    } catch (error) {
-      log(`Failed to process external resource ${url}: ${error}`, options);
+      source = bundleItem.type === 'chunk' ? bundleItem.code : bundleItem.source
     }
-    return tag;
+
+    return `${hashAlgorithm}-${createHash(hashAlgorithm).update(source).digest('base64')}`
   }
 
-  // Handle local resources
-  const possibleKeys = getBundleKey(url, base);
-  let bundleItem = null;
-  let source;
+  const transformHTML = async (bundle, htmlPath, html) => {
+    const changes = []
 
-  log(`Looking for bundle keys:`, options);
-  possibleKeys.forEach(key => log(`- ${key}`, options));
+    for (const { regex, endOffset } of Object.values(HTML_PATTERNS)) {
+      const matches = [...html.matchAll(regex)]
+      for (const match of matches) {
+        const [, url] = match
+        const end = match.index + match[0].length
 
-  for (const key of possibleKeys) {
-    if (bundle[key]) {
-      bundleItem = bundle[key];
-      log(`Found bundle item for key: ${key}`, options);
-      break;
+        const integrity = await calculateIntegrity(bundle, htmlPath, url)
+        if (integrity) {
+          changes.push({
+            integrity,
+            position: end - endOffset
+          })
+        }
+      }
     }
+
+    changes.sort((a, b) => b.position - a.position)
+
+    for (const { integrity, position } of changes) {
+      const insertText = ` integrity="${integrity}"`
+      html = html.slice(0, position) + insertText + html.slice(position)
+    }
+
+    return html
   }
 
-  if (!bundleItem) {
-    log(`Bundle item not found for ${url}`, options);
-    if (!options.ignoreMissingAsset) {
-      console.warn(`${LOG_PREFIX} Asset not found in bundle: ${url}`);
-      log(`Available bundle keys:`, options);
-      Object.keys(bundle).forEach(key => log(`- ${key}`, options));
-    } else {
-      log(`Ignoring missing asset due to ignoreMissingAsset option`, options);
-    }
-    return tag;
-  }
-
-  log(`Bundle item type: ${bundleItem.type}`, options);
-
-  try {
-    if (bundleItem.type === 'chunk') {
-      source = bundleItem.code;
-      log(`Processing chunk content of length: ${source.length}`, options);
-    } else {
-      source = bundleItem.source;
-      log(`Processing asset content of length: ${source.length}`, options);
-    }
-
-    const integrity = computeSri(source, options.algorithm);
-    if (integrity) {
-      log(`Computing SRI for local resource ${url}: ${integrity}`, options);
-      const hasCrossOrigin = hasCrossOriginAttr(tag);
-      const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
-      const newTag = tag.replace(/>$/, ` integrity="${integrity}"${crossOriginAttr}>`);
-      log(`New tag: ${newTag}`, options);
-      return newTag;
-    }
-  } catch (error) {
-    log(`Error processing bundle item: ${error}`, options);
-    if (!options.ignoreMissingAsset) {
-      console.error(`${LOG_PREFIX} Failed to process asset: ${url}`, error);
-    }
-  }
-
-  return tag;
+  return { transformHTML, calculateIntegrity }
 }
 
-export default function sri(userOptions = {}) {
-  const options = { ...DEFAULT_OPTIONS, ...userOptions };
-  let isBuild = false;
-  let base = '';
-  const htmlFiles = new Map(); // Store HTML file info for processing
-  const sriCache = new Map(); // Cache SRI hashes
+export function sri(options = {}) {
+  const {
+    ignoreMissingAsset = false,
+    bypassDomains = [],
+    hashAlgorithm = 'sha384'
+  } = options
 
   return {
     name: 'vite-plugin-sri4',
-    apply: 'build',
     enforce: 'post',
-
+    apply: 'build',
     configResolved(config) {
-      options.domain = config.server?.host || '';
-      isBuild = config.command === 'build';
-      base = config.base || '';
-      log('Plugin configured in ' + (isBuild ? 'build' : 'dev') + ' mode', options);
-    },
+      const transformer = createTransformer({
+        ignoreMissingAsset,
+        bypassDomains,
+        hashAlgorithm
+      }, config)
 
-    async transformIndexHtml(html, ctx) {
-      if (!isBuild || !html) {
-        return html;
-      }
+      const generateBundle = async function(_, bundle) {
+        const htmlFiles = Object.entries(bundle).filter(
+          ([, chunk]) =>
+            chunk.type === 'asset' &&
+            /\.html?$/.test(chunk.fileName)
+        )
 
-      // Store HTML file info for later processing
-      const resourceTags = [];
-
-      // Find script tags
-      const scriptTagRegex = /<script[^>]+src=(?:["']([^"']+)["']|([^ >]+))[^>]*>/g;
-      let match;
-      while ((match = scriptTagRegex.exec(html)) !== null) {
-        const [tag, quotedUrl, unquotedUrl] = match;
-        resourceTags.push({
-          tag,
-          url: quotedUrl || unquotedUrl,
-          type: 'script'
-        });
-      }
-
-      // Find link tags
-      const linkTagRegex = /<link[^>]+href=(?:["']([^"']+)["']|([^ >]+))[^>]*>/g;
-      while ((match = linkTagRegex.exec(html)) !== null) {
-        const [tag, quotedUrl, unquotedUrl] = match;
-        if (tag.includes('stylesheet') || tag.includes('modulepreload')) {
-          resourceTags.push({
-            tag,
-            url: quotedUrl || unquotedUrl,
-            type: 'link'
-          });
-        }
-      }
-
-      // Store HTML file info
-      htmlFiles.set(ctx.filename, {
-        content: html,
-        resources: resourceTags
-      });
-
-      return html;
-    },
-
-    async writeBundle(options, bundle) {
-      for (const [filename, htmlInfo] of htmlFiles) {
-        let content = htmlInfo.content;
-
-        // Process all resources in parallel
-        const updates = await Promise.all(
-          htmlInfo.resources.map(async ({ tag, url, type }) => {
-            if (tag.includes('integrity=')) {
-              return null;
-            }
-
-            // Handle external resources
-            if (/^(https?:)?\/\//i.test(url)) {
-              if (isBypassDomain(url, options.bypassDomains)) {
-                return null;
-              }
-
-              // Check cache first
-              if (sriCache.has(url)) {
-                return {
-                  tag,
-                  newTag: sriCache.get(url)
-                };
-              }
-
-              const corsOk = await externalResourceIsCorsEnabled(url, options);
-              if (!corsOk) {
-                return null;
-              }
-
-              try {
-                const response = await fetch(url);
-                const content = await response.arrayBuffer();
-                const hash = computeSri(Buffer.from(content), options.algorithm);
-                if (hash) {
-                  const hasCrossOrigin = hasCrossOriginAttr(tag);
-                  const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
-                  const newTag = tag.replace(/>$/, ` integrity="${hash}"${crossOriginAttr}>`);
-                  sriCache.set(url, newTag);
-                  return { tag, newTag };
-                }
-              } catch (error) {
-                log(`Failed to process external resource ${url}: ${error}`, options);
-              }
-              return null;
-            }
-
-            // Handle local resources
-            const possibleKeys = getBundleKey(url, base);
-            let bundleItem = null;
-
-            for (const key of possibleKeys) {
-              if (bundle[key]) {
-                bundleItem = bundle[key];
-                break;
-              }
-            }
-
-            if (!bundleItem) {
-              if (!options.ignoreMissingAsset) {
-                console.warn(`${LOG_PREFIX} Asset not found in bundle: ${url}`);
-              }
-              return null;
-            }
-
-            try {
-              const source = bundleItem.type === 'chunk' ? bundleItem.code : bundleItem.source;
-              const integrity = computeSri(source, options.algorithm);
-
-              if (integrity) {
-                const hasCrossOrigin = hasCrossOriginAttr(tag);
-                const crossOriginAttr = hasCrossOrigin ? '' : ` crossorigin="${options.crossorigin}"`;
-                const newTag = tag.replace(/>$/, ` integrity="${integrity}"${crossOriginAttr}>`);
-                return { tag, newTag };
-              }
-            } catch (error) {
-              if (!options.ignoreMissingAsset) {
-                console.error(`${LOG_PREFIX} Failed to process asset: ${url}`, error);
-              }
-            }
-
-            return null;
+        await Promise.all(
+          htmlFiles.map(async ([name, chunk]) => {
+            chunk.source = await transformer.transformHTML(bundle, name, chunk.source.toString())
           })
-        );
-
-        // Apply all updates to the HTML content
-        updates.forEach(update => {
-          if (update) {
-            content = content.replace(update.tag, update.newTag);
-          }
-        });
-
-        // Write the modified content back to the bundle
-        if (bundle[filename]) {
-          bundle[filename].source = content;
-        }
+        )
       }
 
-      // Clear the caches
-      htmlFiles.clear();
-      sriCache.clear();
+      const plugin = config.plugins.find(p => p.name === VITE_INTERNAL_ANALYSIS_PLUGIN)
+      if (!plugin) {
+        throw new Error('vite-plugin-sri4 requires Vite 2.0.0 or higher')
+      }
+
+      if (typeof plugin.generateBundle === 'object' && plugin.generateBundle.handler) {
+        const originalHandler = plugin.generateBundle.handler
+        plugin.generateBundle.handler = async function(...args) {
+          await originalHandler.apply(this, args)
+          await generateBundle.apply(this, args)
+        }
+      } else if (typeof plugin.generateBundle === 'function') {
+        const originalHandler = plugin.generateBundle
+        plugin.generateBundle = async function(...args) {
+          await originalHandler.apply(this, args)
+          await generateBundle.apply(this, args)
+        }
+      }
     }
-  };
+  }
 }
