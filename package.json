@@ -1,6 +1,6 @@
 {
   "name": "vite-plugin-sri4",
-  "version": "1.8.7",
+  "version": "1.9.0",
   "description": "A Vite plugin to generate Subresource Integrity (SRI) hashes for output files.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -23,6 +23,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "cheerio": "^1.0.0",
     "cross-fetch": "^4.1.0"
   },
   "peerDependencies": {
@@ -32,9 +33,11 @@
     "@rollup/plugin-commonjs": "^25.0.7",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@vitest/coverage-v8": "^1.2.2",
+    "cross-fetch": "^4.0.0",
     "rollup": "^4.9.6",
     "vite": "^5.0.12",
-    "vitest": "^1.2.2"
+    "vitest": "^1.2.2",
+    "memfs": "^4.6.0"
   },
   "keywords": [
     "vite",
