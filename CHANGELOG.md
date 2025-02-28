@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2025-02-28
+
+### Breaking Changes
+
+- Bumped version to 2.0.0 to reflect major dependency updates
+
+### Features
+
+- Updated Vite dependency to v6.2.0 in example project
+- Enhanced test coverage for HTML attribute handling
+
+### Improvements
+
+- Added console.log mock in tests for better coverage
+- Added tests for various HTML attribute formats and spacing
+- Added tests for non-standard crossorigin attribute values
+- Added tests for silent log level handling
+
 ## [1.8.6] - 2025-02-17
 
 ### Features
