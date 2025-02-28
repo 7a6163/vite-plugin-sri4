@@ -16,6 +16,7 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
+- [Inspiration](#inspiration)
 - [License](#license)
 
 ## Features
@@ -177,6 +178,14 @@ Please make sure to:
 - Add tests for new features
 - Follow the existing code style
 - Update the CHANGELOG.md
+
+## Inspiration
+
+This project was inspired by [vite-plugin-sri3](https://github.com/yoyo930021/vite-plugin-sri3), which provides subresource integrity for Vite. We've built upon its foundation to create an enhanced version with additional features and improved compatibility.
+
+Other projects that influenced this work:
+- [rollup-plugin-sri](https://github.com/JonasKruckenberg/rollup-plugin-sri)
+- [@small-tech/vite-plugin-sri](https://github.com/small-tech/vite-plugin-sri)
 
 ## License
 
