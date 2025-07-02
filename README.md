@@ -27,6 +27,7 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - **Bypass Domains:** Option to specify domains to bypass SRI injection.
 - **Missing Asset Handling:** Configurable warning suppression for missing assets.
 - **Robust Content Support:** Handles various content types including strings, Buffer, and Uint8Array.
+- **Vite Compatibility:** Compatible with Vite 6.0 and 7.0.
 
 ## Installation
 
