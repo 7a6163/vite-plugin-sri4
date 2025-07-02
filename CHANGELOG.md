@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0] - 2025-07-02
+
+### Breaking Changes
+
+- Dropped support for Vite 4.0 and 5.0
+- Bumped version to 3.0.0 to reflect major dependency changes
+
+### Features
+
+- Added support for Vite 7.0
+
+
 ## [2.0.0] - 2025-02-28
 
 ### Breaking Changes
