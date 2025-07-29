@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.0] - 2025-07-29
+
+### Improvements
+
+#### Code Architecture
+- **Modular Design**: Completely refactored codebase into separate modules for better maintainability
+  - `src/cache.js` - ResourceCache class with TTL and CacheManager for instance management
+  - `src/network-utils.js` - Network operations including CORS checks and resource fetching
+  - `src/integrity-calculator.js` - SRI hash computation and bundle key resolution
+  - `src/html-parser.js` - HTML parsing, transformation, and integrity attribute injection
+  - `src/logger.js` - Logger abstraction with configurable log levels
+
+#### Logging System
+- **Replaced Console Hijacking**: Eliminated the anti-pattern of modifying global console object
+- **Instance-based Logger**: Each plugin instance now has its own logger with configurable levels
+- **Better Log Formatting**: Automatic message formatting with plugin name prefix
+- **Support for Child Loggers**: Hierarchical logging support for modular components
+- **Log Levels**: Support for `silent`, `error`, `warn`, `info`, and `debug` levels
+
+#### HTML Transformation
+- **Function Decomposition**: Broke down complex `transformHTML` into smaller, focused functions:
+  - `validateHtmlInput()` - Input validation
+  - `processMatch()` - Single match processing
+  - `processPatternMatches()` - Pattern-specific match processing
+  - `collectIntegrityChanges()` - Change collection
+  - `hasExistingIntegrity()` - Duplicate detection
+  - `applyIntegrityChanges()` - Change application
+- **Better Separation of Concerns**: Each function has a single responsibility
+- **Improved Testability**: Smaller functions are easier to test independently
+
+#### Memory Management
+- **Instance-based Caching**: Eliminated global cache instances that could cause memory leaks
+- **Proper Cleanup**: Each plugin instance manages its own cache lifecycle
+- **No Global State Pollution**: Removed shared state between plugin instances
+
+### Technical Details
+- All functionality remains backward compatible
+- No breaking changes to the public API
+- All existing tests continue to pass (56/56)
+- Build system unchanged
+
 ## [3.0.0] - 2025-07-02
 
 ### Breaking Changes
