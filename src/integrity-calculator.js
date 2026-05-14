@@ -1,5 +1,5 @@
-import { createHash } from 'crypto'
-import path from 'path'
+import { createHash } from 'node:crypto'
+import path from 'node:path'
 import { isUrlFromBypassDomain, checkResourceSupport, fetchResource } from './network-utils.js'
 
 /**
@@ -57,12 +57,18 @@ export async function calculateIntegrity(
     const bundleItem = bundle[bundleKey]
 
     if (!bundleItem) {
-      // Try to find a matching item with more flexible matching
+      // Fall back to suffix match in either direction to absorb hashed
+      // filenames AND base-prefix mismatches (e.g. URL "/base/main.js" with
+      // bare bundle key "main.js"). A mismatch here just produces a wrong
+      // integrity hash, which the browser rejects — failure-closed.
       const possibleMatch = Object.keys(bundle).find(key =>
         key.endsWith(bundleKey) || bundleKey.endsWith(key)
       )
 
       if (possibleMatch) {
+        if (logger) {
+          logger.debug(`Bundle key fallback: ${bundleKey} -> ${possibleMatch}`)
+        }
         source = bundle[possibleMatch].type === 'chunk'
           ? bundle[possibleMatch].code
           : bundle[possibleMatch].source

@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.0] - 2026-05-14
+
+### Breaking Changes
+
+- Dropped support for Vite 6. Peer dependency range is now `^7.0.0 || ^8.0.0`.
+- Renamed README-documented options to match the actual code: `algorithm` → `hashAlgorithm`, `debug` → `logLevel`. The code has always used the new names; users following the old README had their config silently ignored. Audit your `sri({ ... })` call if you set `algorithm` or `debug`.
+
+### Features
+
+- **Vite 8 support.** Verified against Vite `8.0.12`, including the Rolldown-based native build path. The plugin now patches both `vite:build-import-analysis` (legacy/Rollup path) and `native:import-analysis-build` (Rolldown native path) when present.
+- **`crossorigin="anonymous"` is now actually injected** alongside `integrity="..."`. The README and example HTML have always claimed this, but the source only inserted `integrity`. Without `crossorigin`, browsers fail SRI checks on cross-origin resources. Tags that already declare `crossorigin` (with any value) are left untouched.
+
+### Improvements
+
+- `createHash` and `path` imports use the `node:` prefix to match the rollup externals list, removing a potential bundler mismatch.
+- Removed unused `cheerio` dependency (HTML parsing is regex-based; cheerio was never imported).
+- Removed duplicate `cross-fetch` entry from `devDependencies`.
+- Bundle-key suffix fallback now emits a debug log when it fires, with an inline comment explaining why both match directions are needed (hashed filenames and base-prefix mismatches) and why it is failure-closed (wrong hash → browser rejects the load).
+- Error message now lists both internal-plugin names searched and the minimum supported Vite version.
+- Idempotency checks for `integrity` and `crossorigin` use word-boundary regexes scoped to the matched tag, replacing a ±100-char substring window that could false-match across adjacent tags.
+
+### Tests
+
+- Added regression tests for crossorigin injection (local + external resources), Rolldown native plugin patching, the handler-object form of `generateBundle`, and both directions of the bundle-key suffix fallback.
+
 ## [3.1.0] - 2025-07-29
 
 ### Improvements

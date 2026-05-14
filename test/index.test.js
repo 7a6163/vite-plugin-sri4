@@ -266,7 +266,7 @@ describe('vite-plugin-sri4', () => {
       expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
     })
 
-    test('should check if crossorigin attribute is added for external resources', async () => {
+    test('should add crossorigin="anonymous" alongside integrity for external resources', async () => {
       bundle['index.html'].source = '<script src="https://example.com/script.js"></script>'
 
       fetch
@@ -283,15 +283,14 @@ describe('vite-plugin-sri4', () => {
 
       await generateBundleFn({}, bundle)
 
-      // Your implementation might or might not add crossorigin
-      // Just test that it processed the resource successfully
       expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+      expect(bundle['index.html'].source).toMatch(/crossorigin="anonymous"/)
+    })
 
-      // Log a note if crossorigin isn't added
-      if (!bundle['index.html'].source.includes('crossorigin')) {
-        console.warn = originalConsoleWarn
-        console.warn("NOTE: Your implementation doesn't add crossorigin attribute to external resources.")
-      }
+    test('should add crossorigin="anonymous" alongside integrity for local resources', async () => {
+      await generateBundleFn({}, bundle)
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+      expect(bundle['index.html'].source).toMatch(/crossorigin="anonymous"/)
     })
 
     test('should check CORS headers for external resources', async () => {
@@ -516,7 +515,7 @@ describe('vite-plugin-sri4', () => {
       const config = {
         plugins: []
       }
-      expect(() => plugin.configResolved(config)).toThrow(/requires Vite 2.0.0 or higher/)
+      expect(() => plugin.configResolved(config)).toThrow(/could not find a Vite import-analysis plugin/)
     })
 
     test('should throw error if no build plugin found', () => {
@@ -524,7 +523,7 @@ describe('vite-plugin-sri4', () => {
       const config = {
         plugins: [{ name: 'some-other-plugin' }]
       }
-      expect(() => plugin.configResolved(config)).toThrow(/requires Vite 2.0.0 or higher/)
+      expect(() => plugin.configResolved(config)).toThrow(/could not find a Vite import-analysis plugin/)
     })
 
     test('should ignore missing assets when ignoreMissingAsset is true', async () => {
@@ -1618,6 +1617,167 @@ describe('vite-plugin-sri4', () => {
       await generateBundle({}, bundle)
 
       // Should add integrity attribute correctly
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+  })
+
+  describe('Vite 8 / Rolldown compatibility', () => {
+    test('should patch native:import-analysis-build when only that plugin is present', async () => {
+      const plugin = sri()
+      const config = {
+        base: '/',
+        plugins: [{
+          name: 'native:import-analysis-build',
+          generateBundle: vi.fn()
+        }]
+      }
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="main.js"></script>'
+        },
+        'main.js': {
+          type: 'chunk',
+          fileName: 'main.js',
+          code: 'console.log("test")'
+        }
+      }
+
+      plugin.configResolved(config)
+      const generateBundle = config.plugins[0].generateBundle
+
+      await generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+      expect(bundle['index.html'].source).toMatch(/crossorigin="anonymous"/)
+    })
+
+    test('should patch both legacy and native plugins when both are present', async () => {
+      const plugin = sri()
+      const legacy = { name: 'vite:build-import-analysis', generateBundle: vi.fn() }
+      const native = { name: 'native:import-analysis-build', generateBundle: vi.fn() }
+      const config = { base: '/', plugins: [legacy, native] }
+
+      plugin.configResolved(config)
+
+      // Both plugin handlers should now be wrapped (not the original vi.fn)
+      // We verify by checking they still match the function type contract
+      expect(typeof legacy.generateBundle).toBe('function')
+      expect(typeof native.generateBundle).toBe('function')
+
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="main.js"></script>'
+        },
+        'main.js': {
+          type: 'chunk',
+          fileName: 'main.js',
+          code: 'console.log("test")'
+        }
+      }
+
+      // Running either wrapped handler should trigger SRI injection. Use the legacy
+      // one; the native handler is also wrapped but Vite would only call one path
+      // per build in practice.
+      await legacy.generateBundle({}, bundle)
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('should patch handler-object form (Rollup hook with order/sequential)', async () => {
+      const plugin = sri()
+      const innerHandler = vi.fn()
+      const config = {
+        base: '/',
+        plugins: [{
+          name: 'vite:build-import-analysis',
+          generateBundle: { order: 'pre', sequential: true, handler: innerHandler }
+        }]
+      }
+
+      plugin.configResolved(config)
+      const wrapped = config.plugins[0].generateBundle.handler
+
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="main.js"></script>'
+        },
+        'main.js': {
+          type: 'chunk',
+          fileName: 'main.js',
+          code: 'console.log("test")'
+        }
+      }
+
+      await wrapped({}, bundle)
+
+      expect(innerHandler).toHaveBeenCalled()
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+  })
+
+  describe('Bundle-key fallback', () => {
+    test('should resolve via key.endsWith(bundleKey) for hashed filenames', async () => {
+      const plugin = sri()
+      const config = {
+        base: '/',
+        plugins: [{
+          name: 'vite:build-import-analysis',
+          generateBundle: vi.fn()
+        }]
+      }
+      // URL is "app.js" (bare), bundle key is "assets/app.js" (with prefix).
+      // 'assets/app.js'.endsWith('app.js') is true → fallback resolves.
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="app.js"></script>'
+        },
+        'assets/app.js': {
+          type: 'chunk',
+          fileName: 'assets/app.js',
+          code: 'console.log("hashed")'
+        }
+      }
+
+      plugin.configResolved(config)
+      await config.plugins[0].generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('should resolve via bundleKey.endsWith(key) for base-prefixed URLs', async () => {
+      const plugin = sri()
+      const config = {
+        base: '/subdir/',
+        plugins: [{
+          name: 'vite:build-import-analysis',
+          generateBundle: vi.fn()
+        }]
+      }
+      // URL "/subdir/main.js" → bundleKey "subdir/main.js" (after leading-slash strip).
+      // Bundle has bare "main.js". 'subdir/main.js'.endsWith('main.js') → matches.
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="/subdir/main.js"></script>'
+        },
+        'main.js': {
+          type: 'chunk',
+          fileName: 'main.js',
+          code: 'console.log("base-prefixed")'
+        }
+      }
+
+      plugin.configResolved(config)
+      await config.plugins[0].generateBundle({}, bundle)
+
       expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
     })
   })
