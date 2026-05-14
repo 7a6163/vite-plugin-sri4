@@ -3,7 +3,12 @@ import { createTransformer } from './html-parser.js'
 import { Logger } from './logger.js'
 
 // Constants definition
-const VITE_INTERNAL_ANALYSIS_PLUGIN = 'vite:build-import-analysis'
+// Vite 6/7 uses `vite:build-import-analysis`; Vite 8 Rolldown native path
+// adds `native:import-analysis-build`. We patch whichever (or both) is present.
+const VITE_INTERNAL_ANALYSIS_PLUGINS = [
+  'vite:build-import-analysis',
+  'native:import-analysis-build'
+]
 const DEFAULT_HASH_ALGORITHM = 'sha384'
 const DEFAULT_PLUGIN_NAME = 'vite-plugin-sri4'
 
@@ -67,22 +72,30 @@ function sri(options = {}) {
         )
       }
 
-      const plugin = config.plugins.find(p => p.name === VITE_INTERNAL_ANALYSIS_PLUGIN)
-      if (!plugin) {
-        throw new Error(`[${DEFAULT_PLUGIN_NAME}] requires Vite 2.0.0 or higher`)
+      const targets = config.plugins.filter(
+        p => p && VITE_INTERNAL_ANALYSIS_PLUGINS.includes(p.name)
+      )
+      if (targets.length === 0) {
+        throw new Error(
+          `[${DEFAULT_PLUGIN_NAME}] could not find a Vite import-analysis plugin to hook into ` +
+          `(looked for: ${VITE_INTERNAL_ANALYSIS_PLUGINS.join(', ')}). ` +
+          `Requires Vite 6.0.0 or higher.`
+        )
       }
 
-      if (typeof plugin.generateBundle === 'object' && plugin.generateBundle.handler) {
-        const originalHandler = plugin.generateBundle.handler
-        plugin.generateBundle.handler = async function(...args) {
-          await originalHandler.apply(this, args)
-          await generateBundle.apply(this, args)
-        }
-      } else if (typeof plugin.generateBundle === 'function') {
-        const originalHandler = plugin.generateBundle
-        plugin.generateBundle = async function(...args) {
-          await originalHandler.apply(this, args)
-          await generateBundle.apply(this, args)
+      for (const plugin of targets) {
+        if (typeof plugin.generateBundle === 'object' && plugin.generateBundle.handler) {
+          const originalHandler = plugin.generateBundle.handler
+          plugin.generateBundle.handler = async function(...args) {
+            await originalHandler.apply(this, args)
+            await generateBundle.apply(this, args)
+          }
+        } else if (typeof plugin.generateBundle === 'function') {
+          const originalHandler = plugin.generateBundle
+          plugin.generateBundle = async function(...args) {
+            await originalHandler.apply(this, args)
+            await generateBundle.apply(this, args)
+          }
         }
       }
     }
