@@ -58,6 +58,7 @@ async function processMatch(
     return {
       integrity,
       position: end - endOffset,
+      tagStart: match.index,
       url // For logging
     }
   }
@@ -125,12 +126,21 @@ async function collectIntegrityChanges(
   return changes
 }
 
+const CROSSORIGIN_ATTR_RE = /\bcrossorigin\s*=/i
+const INTEGRITY_ATTR_RE = /\bintegrity\s*=/i
+
 /**
- * Check if integrity attribute already exists in HTML segment
+ * Check if integrity attribute already exists in the same tag
  */
-function hasExistingIntegrity(html, position, integrity) {
-  const segment = html.slice(Math.max(0, position - 100), position + 100)
-  return segment.includes(`integrity="${integrity}"`)
+function hasExistingIntegrity(html, tagStart, position) {
+  return INTEGRITY_ATTR_RE.test(html.slice(tagStart, position))
+}
+
+/**
+ * Check if crossorigin attribute already exists in the same tag
+ */
+function hasExistingCrossorigin(html, tagStart, position) {
+  return CROSSORIGIN_ATTR_RE.test(html.slice(tagStart, position))
 }
 
 /**
@@ -140,13 +150,16 @@ function applyIntegrityChanges(html, changes, logger) {
   // Sort by position in descending order to insert from back to front
   changes.sort((a, b) => b.position - a.position)
 
-  for (const { integrity, position, url } of changes) {
-    // Skip if integrity attribute already exists
-    if (hasExistingIntegrity(html, position, integrity)) {
+  for (const { integrity, position, tagStart, url } of changes) {
+    // Skip if integrity attribute already exists on this tag
+    if (hasExistingIntegrity(html, tagStart, position)) {
       continue
     }
 
-    const insertText = ` integrity="${integrity}"`
+    let insertText = ` integrity="${integrity}"`
+    if (!hasExistingCrossorigin(html, tagStart, position)) {
+      insertText += ' crossorigin="anonymous"'
+    }
     html = html.slice(0, position) + insertText + html.slice(position)
     logger.debug(`Added integrity for: ${url}`)
   }

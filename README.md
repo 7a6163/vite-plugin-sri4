@@ -27,7 +27,7 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - **Bypass Domains:** Option to specify domains to bypass SRI injection.
 - **Missing Asset Handling:** Configurable warning suppression for missing assets.
 - **Robust Content Support:** Handles various content types including strings, Buffer, and Uint8Array.
-- **Vite Compatibility:** Compatible with Vite 6.0 and 7.0.
+- **Vite Compatibility:** Compatible with Vite 7.0 and Vite 8.0 (including the Rolldown-based native build path).
 
 ## Installation
 
@@ -48,13 +48,13 @@ export default defineConfig({
   plugins: [
     sri({
       // Optional. The security hash algorithm. Defaults to "sha384".
-      algorithm: 'sha384',
+      hashAlgorithm: 'sha384',
       // Optional. Domains to bypass SRI injection.
       bypassDomains: ['example.com'],
       // Optional. Suppress warnings for missing assets.
       ignoreMissingAsset: false,
-      // Optional. Enable debug logging.
-      debug: false
+      // Optional. Log verbosity: 'silent' | 'error' | 'warn' | 'info' | 'debug'. Defaults to 'warn'.
+      logLevel: 'warn'
     })
   ]
 });
@@ -76,14 +76,14 @@ Output:
 
 ## Plugin Options
 
-* `algorithm` (string):
-  The hash algorithm used for computing SRI. Default is sha384. You may change it to other supported algorithms like sha256.
+* `hashAlgorithm` (string):
+  The hash algorithm used for computing SRI. Default is `sha384`. You may change it to other supported algorithms like `sha256` or `sha512`.
 * `bypassDomains` (Array<string>):
   Array of domain names where SRI injection should be skipped. This allows external resources from specified domains to be excluded from SRI checks (for example, when they may not support CORS).
 * `ignoreMissingAsset` (boolean):
-  When true, suppresses warnings for assets that are not found in the bundle. Default is false.
-* `debug` (boolean):
-  When true, enables detailed debug logging. Default is false.
+  When true, suppresses warnings for assets that are not found in the bundle. Default is `false`.
+* `logLevel` (string):
+  Log verbosity. One of `silent`, `error`, `warn`, `info`, `debug`. Default is `warn`. Use `debug` to see per-resource decisions during the build.
 
 ## Example Project
 
@@ -150,11 +150,11 @@ The example project shows:
 
 ### Debug Mode
 
-Enable debug mode to see detailed logs:
+Set `logLevel: 'debug'` to see detailed logs:
 
 ```javascript
 sri({
-  debug: true
+  logLevel: 'debug'
 })
 ```
 
@@ -163,6 +163,7 @@ This will show:
 - SRI hash computation
 - CORS checks
 - Missing asset warnings
+- Bundle-key fallback matches (when a URL is resolved via suffix match)
 
 ## Contributing
 
