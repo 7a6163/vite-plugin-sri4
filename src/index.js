@@ -22,6 +22,12 @@ const VITE_INTERNAL_ANALYSIS_PLUGINS = [
   'vite:build-import-analysis',
   'native:import-analysis-build'
 ]
+// Hosts that serve a different response per client by construction, so a
+// build-time hash can never match what a browser receives. Merged with the
+// user's `bypassDomains` rather than used as its default value: a user who
+// passes the option would otherwise silently replace this list and get the
+// broken build back.
+const DEFAULT_BYPASS_DOMAINS = ['fonts.googleapis.com']
 const DEFAULT_HASH_ALGORITHM = 'sha384'
 const CROSSORIGIN_VALUES = ['anonymous', 'use-credentials']
 const DEFAULT_PLUGIN_NAME = 'vite-plugin-sri4'
@@ -74,13 +80,14 @@ function validateOptions(hashAlgorithm, crossorigin) {
 function sri(options = {}) {
   const {
     ignoreMissingAsset = false,
-    bypassDomains = [],
     hashAlgorithm = DEFAULT_HASH_ALGORITHM,
     crossorigin = 'anonymous',
     logLevel = 'warn',
     manifest = false,
     importmap = false
   } = options
+
+  const bypassDomains = [...DEFAULT_BYPASS_DOMAINS, ...(options.bypassDomains || [])]
 
   validateOptions(hashAlgorithm, crossorigin)
 
