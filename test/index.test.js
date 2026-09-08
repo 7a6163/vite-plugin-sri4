@@ -252,10 +252,7 @@ describe('vite-plugin-sri4', () => {
           headers: new Headers({
             'access-control-allow-origin': '*',
             'cache-control': 'public, max-age=31536000, immutable'
-          })
-        }))
-        .mockImplementationOnce(() => Promise.resolve({
-          ok: true,
+          }),
           arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
         }))
 
@@ -274,11 +271,8 @@ describe('vite-plugin-sri4', () => {
           headers: new Headers({
           'access-control-allow-origin': '*',
           'cache-control': 'public, max-age=31536000, immutable'
-        })
-        }))
-        .mockImplementationOnce(() => Promise.resolve({
-          ok: true,
-          arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
+        }),
+        arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
         }))
 
       await generateBundleFn({}, bundle)
@@ -375,10 +369,7 @@ describe('vite-plugin-sri4', () => {
             'access-control-allow-origin': '*',
             // RFC 9111 permits a quoted-string directive value
             'cache-control': 'public, max-age="31536000"'
-          })
-        }))
-        .mockImplementationOnce(() => Promise.resolve({
-          ok: true,
+          }),
           arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
         }))
 
@@ -411,6 +402,32 @@ describe('vite-plugin-sri4', () => {
       expect(fetch).not.toHaveBeenCalled()
     })
 
+    test('should issue one request per external resource, not a HEAD probe and a GET', async () => {
+      bundle['index.html'].source = '<script src="https://cdn.example.com/lib@1.0.0.js"></script>'
+
+      fetch.mockReset()
+      fetch.mockImplementation(() => Promise.resolve({
+        ok: true,
+        headers: new Headers({
+          'access-control-allow-origin': '*',
+          'cache-control': 'public, max-age=31536000, immutable'
+        }),
+        arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
+      }))
+
+      await generateBundleFn({}, bundle)
+
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+      // The gates read the headers of the response that carries the bytes, so
+      // there is nothing left to probe for - and a host that refuses HEAD
+      // (js.tappaysdk.com answers 403) is no longer unreachable.
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(fetch).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ method: 'HEAD' })
+      )
+    })
+
     test('should add integrity when Cache-Control says immutable', async () => {
       bundle['index.html'].source =
         '<link rel="stylesheet" href="https://cdn.example.com/bootstrap@5.3.3.css">'
@@ -421,10 +438,7 @@ describe('vite-plugin-sri4', () => {
           headers: new Headers({
             'access-control-allow-origin': '*',
             'cache-control': 'public, max-age=31536000, immutable'
-          })
-        }))
-        .mockImplementationOnce(() => Promise.resolve({
-          ok: true,
+          }),
           arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
         }))
 
@@ -443,10 +457,7 @@ describe('vite-plugin-sri4', () => {
             'access-control-allow-origin': '*',
             // unpkg spells a pinned version this way, with no `immutable`
             'cache-control': 'public, max-age=31536000'
-          })
-        }))
-        .mockImplementationOnce(() => Promise.resolve({
-          ok: true,
+          }),
           arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
         }))
 
@@ -464,10 +475,7 @@ describe('vite-plugin-sri4', () => {
           headers: new Headers({
             'access-control-allow-origin': '*',
             'cache-control': 'public, max-age=31536000, immutable'
-          })
-        }))
-        .mockImplementationOnce(() => Promise.resolve({
-          ok: true,
+          }),
           arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
         }))
 
@@ -1689,10 +1697,7 @@ describe('vite-plugin-sri4', () => {
           headers: new Headers({
             'access-control-allow-origin': '*',
             'cache-control': 'public, max-age=31536000, immutable'
-          })
-        }))
-        .mockImplementationOnce(() => Promise.resolve({
-          ok: true,
+          }),
           arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
         }))
 
@@ -1729,10 +1734,7 @@ describe('vite-plugin-sri4', () => {
           headers: new Headers({
             'access-control-allow-origin': '*',
             'cache-control': 'public, max-age=31536000, immutable'
-          })
-        }))
-        .mockImplementationOnce(() => Promise.resolve({
-          ok: true,
+          }),
           arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
         }))
 

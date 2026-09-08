@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { matchesDomain, checkResourceSupport, fetchResource } from './network-utils.js'
+import { matchesDomain, fetchVerifiedResource } from './network-utils.js'
 
 /**
  * Read the hashable source out of a bundle entry (chunk code or asset source)
@@ -171,11 +171,9 @@ export async function calculateIntegrity(
   let bundleFileName = null
   if (fetchUrl) {
     const trusted = matchesDomain(fetchUrl, trustDomains, logger)
-    const isSupported = await checkResourceSupport(
-      fetchUrl, cacheManager.getUrlSupportCache(), logger, trusted
+    source = await fetchVerifiedResource(
+      fetchUrl, cacheManager.getResourceCache(), logger, trusted
     )
-    if (!isSupported) return null
-    source = await fetchResource(fetchUrl, cacheManager.getResourceCache(), logger)
     if (!source) return null
   } else if (!ownAsset && SCHEME_RE.test(url)) {
     // data:/blob: and unknown schemes cannot be resolved to a bundle asset

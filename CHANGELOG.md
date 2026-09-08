@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+
+- **A host that refuses `HEAD` is no longer unreachable, and every external resource costs one request instead of two.** The CORS and immutability gates ran against a `HEAD` probe, then a second `GET` fetched the bytes and threw its own headers away — the very headers the gates had just asked for. Hosts that serve `GET` but block `HEAD` are common enough to matter: `js.tappaysdk.com` answers `403` to `HEAD` and `200` to `GET`, so a payment SDK reported as "could not be checked" and shipped with no integrity. Both now come from one `GET`.
+
+  The cost is that a resource which fails a gate is downloaded before it is rejected. That is the right side to lose on — the accepted case, which is every build that actually ships hashes, halves its requests.
+
+### Documentation
+
+- **`trustDomains` now documents when *not* to use it.** The README explained the option but not its failure mode. It now leads with the shape that genuinely calls for it — a version-pinned URL from an origin that sends no `Cache-Control` at all — and lists what to keep it away from: unversioned vendor URLs, floating ranges, and per-client responses.
+
+### Internal
+
+- The GitHub Actions publish workflow creates a GitHub Release from the matching `CHANGELOG.md` section. Renovate and Dependabot read Releases, not a file in the repo, so upgrade PRs for this package had empty bodies — which is how 4.2.0 landed silently on everyone tracking `^4.0.0`.
+- Dropped `CacheManager.urlSupportCache`, which had no user left once the `HEAD` probe went away.
+
 ## [5.0.0] - 2026-09-08
 
 External resources are the whole of this release. Nothing here touches how your own build outputs are hashed.
