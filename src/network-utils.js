@@ -3,14 +3,16 @@
 const DEFAULT_TIMEOUT = 5000
 
 /**
- * Check if URL is from a bypass domain
+ * Does an external URL's host match one of `domains`, or a subdomain of one?
+ * Used by both `bypassDomains` and `trustDomains`.
  */
-export function isUrlFromBypassDomain(url, bypassDomains = [], logger = null) {
+export function matchesDomain(url, domains = [], logger = null) {
   if (!url || typeof url !== 'string' || !url.startsWith('http')) return false
+  if (domains.length === 0) return false
 
   try {
     const urlObj = new URL(url)
-    return bypassDomains.some(domain =>
+    return domains.some(domain =>
       urlObj.hostname === domain || urlObj.hostname.endsWith(`.${domain}`)
     )
   } catch (error) {
@@ -21,22 +23,55 @@ export function isUrlFromBypassDomain(url, bypassDomains = [], logger = null) {
   }
 }
 
+// A year. The conventional encoding of "this URL's bytes will never change",
+// and what every CDN puts on a version-pinned path.
+const IMMUTABLE_MAX_AGE = 31536000
+
 /**
- * `Cache-Control: private`, in either the bare or the `private="field"` form.
- * Substring matching would be wrong - a directive like `x-private` is not this.
+ * Does the origin declare this URL's bytes immutable - `Cache-Control:
+ * immutable`, or a max-age of a year or more?
+ *
+ * Measured, because the split is what makes this usable as a gate. Pinned
+ * third-party libraries, the case SRI actually exists for:
+ *
+ *   cdnjs    jquery/3.7.1       max-age=30672000, immutable
+ *   jsdelivr bootstrap@5.3.3    max-age=31536000, immutable
+ *   unpkg    htmx.org@1.9.12    max-age=31536000
+ *   code.jquery.com  3.7.1      max-age=31536000
+ *
+ * Everything that rolls under a stable URL:
+ *
+ *   jsdelivr vue@3              max-age=604800
+ *   fonts.googleapis.com        max-age=86400   (also `private`)
+ *   plausible.io/js/script.js   max-age=86400
+ *   cdn.tailwindcss.com         max-age=14400
+ *   connect.facebook.net        max-age=1200
+ *   js.stripe.com/v3/           max-age=120
+ *   unpkg    react@18           max-age=60
+ *
+ * Nothing lands between 604800 and 30672000, so the threshold is not a
+ * balancing act - it separates two clusters the CDNs themselves created.
  */
-function isPrivateResponse(cacheControl) {
+function isImmutableResponse(cacheControl) {
   if (!cacheControl) return false
-  return cacheControl.split(',').some(directive => {
+
+  for (const directive of cacheControl.split(',')) {
     const token = directive.trim().toLowerCase()
-    return token === 'private' || token.startsWith('private=')
-  })
+    // Token equality, not substring: `x-immutable` is not this directive
+    if (token === 'immutable') return true
+    if (token.startsWith('max-age=')) {
+      const seconds = Number(token.slice('max-age='.length))
+      if (Number.isFinite(seconds) && seconds >= IMMUTABLE_MAX_AGE) return true
+    }
+  }
+
+  return false
 }
 
 /**
  * Resource check with retry mechanism
  */
-export async function checkResourceSupport(url, urlSupportCache, logger = null, retries = 2) {
+export async function checkResourceSupport(url, urlSupportCache, logger = null, trusted = false, retries = 2) {
   if (urlSupportCache.has(url)) {
     return urlSupportCache.get(url)
   }
@@ -54,49 +89,65 @@ export async function checkResourceSupport(url, urlSupportCache, logger = null, 
 
       clearTimeout(timeoutId)
 
-      // Only `*` can be verified at build time. Injecting integrity also means
-      // injecting crossorigin="anonymous"; if the server answers with a
-      // concrete origin that does not match wherever the HTML ends up being
-      // served from, that turns a working script into a blocked one. Skipping
-      // is the safe outcome, but say so at warn level - silence here is what
-      // makes an unprotected resource easy to miss.
-      const corsHeader = response.headers.get('access-control-allow-origin')
-
-      // Reachable and CORS-eligible is not the same property as byte-stable.
-      // `private` is the origin declaring this response unsafe to share
-      // between clients, and a response that cannot be shared between clients
-      // cannot have a hash pinned to it either: what we fetch here is one
-      // client's copy. Google Fonts is the case in the wild - it answers
-      // `access-control-allow-origin: *` while serving different @font-face
-      // blocks per client, so the CORS gate alone waves it through and the
-      // browser then blocks a stylesheet whose hash matches nothing.
-      //
-      // Deliberately not `vary`: Google varies on User-Agent without
-      // declaring it (`vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`),
-      // so a vary-based gate lets this exact resource straight through.
-      const cacheControl = response.headers.get('cache-control')
-      if (response.ok && isPrivateResponse(cacheControl)) {
+      // Every path out of here that skips a resource says why. A tag that
+      // silently ships without integrity is the thing that is easy to miss.
+      if (!response.ok) {
         if (logger) {
           logger.warn(
-            `Skipping SRI for ${url}: Cache-Control is "${cacheControl}", so the origin serves ` +
-            'a per-client response and the bytes hashed at build time are not the bytes the ' +
-            'browser receives. Add the domain to bypassDomains to silence this.'
+            `Skipping SRI for ${url}: HEAD returned ${response.status}, so the resource ` +
+            'could not be checked. Add the domain to bypassDomains to silence this.'
           )
         }
         urlSupportCache.set(url, false)
         return false
       }
 
-      const isSupported = response.ok && corsHeader === '*'
-      if (response.ok && corsHeader && corsHeader !== '*' && logger) {
-        logger.warn(
-          `Skipping SRI for ${url}: Access-Control-Allow-Origin is "${corsHeader}", not "*", ` +
-          'so crossorigin="anonymous" cannot be verified at build time. ' +
-          'Add the domain to bypassDomains to silence this.'
-        )
+      // Only `*` can be verified at build time. Injecting integrity also means
+      // injecting crossorigin="anonymous"; if the server answers with a
+      // concrete origin that does not match wherever the HTML ends up being
+      // served from, that turns a working script into a blocked one.
+      const corsHeader = response.headers.get('access-control-allow-origin')
+      if (corsHeader !== '*') {
+        if (logger) {
+          logger.warn(
+            `Skipping SRI for ${url}: Access-Control-Allow-Origin is ` +
+            `${corsHeader ? `"${corsHeader}", not "*"` : 'absent'}, so crossorigin="anonymous" ` +
+            'cannot be verified at build time. ' +
+            'Add the domain to bypassDomains to silence this.'
+          )
+        }
+        urlSupportCache.set(url, false)
+        return false
       }
-      urlSupportCache.set(url, isSupported)
-      return isSupported
+
+      // Reachable and CORS-eligible is not the same property as byte-stable.
+      // A hash pins one snapshot of bytes forever, so it is only safe on a URL
+      // whose bytes never change - and the origin is the only party that knows.
+      // Require it to say so rather than hunting for reasons to skip: a
+      // blacklist of known-bad origins is never finished (Google Fonts is
+      // `private`, but cdn.tailwindcss.com and plausible.io are ordinary
+      // `public` responses that roll just the same), and every gap in it ships
+      // a build that works today and breaks whenever the vendor deploys.
+      //
+      // Deliberately not `vary`: Google Fonts varies on User-Agent without
+      // declaring it (`vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`),
+      // so a vary-based gate would let that resource straight through.
+      const cacheControl = response.headers.get('cache-control')
+      if (!trusted && !isImmutableResponse(cacheControl)) {
+        if (logger) {
+          logger.warn(
+            `Skipping SRI for ${url}: Cache-Control is ` +
+            `${cacheControl ? `"${cacheControl}"` : 'absent'}, so the origin does not declare ` +
+            'this URL immutable and its bytes may differ from the ones hashed here. Pin a ' +
+            'version in the URL, or add the domain to trustDomains if you know it is stable.'
+          )
+        }
+        urlSupportCache.set(url, false)
+        return false
+      }
+
+      urlSupportCache.set(url, true)
+      return true
     } catch (error) {
       lastError = error
       if (error.name === 'AbortError') {
