@@ -3,42 +3,103 @@ import path from 'node:path'
 import { isUrlFromBypassDomain, checkResourceSupport, fetchResource } from './network-utils.js'
 
 /**
+ * Read the hashable source out of a bundle entry (chunk code or asset source)
+ */
+export function bundleSource(item) {
+  return item.type === 'chunk' ? item.code : item.source
+}
+
+/**
+ * Compute an SRI string for a source that may be a string, Buffer or Uint8Array
+ */
+export function sriHash(source, hashAlgorithm) {
+  const hash = createHash(hashAlgorithm)
+  hash.update(typeof source === 'string' ? source : Buffer.from(source))
+  return `${hashAlgorithm}-${hash.digest('base64')}`
+}
+
+// Anything carrying a scheme (data:, blob:, invalid:) is not a path into the
+// bundle. Protocol-relative `//host/path` is excluded here - it is a real HTTP
+// URL and is fetched, not skipped.
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
+const HTTP_RE = /^https?:/i
+
+/**
+ * The URL to fetch for an external resource, or null if it is not fetchable.
+ */
+function externalUrl(url) {
+  if (HTTP_RE.test(url)) return url
+  // Protocol-relative: same origin scheme as the page, https at build time
+  if (url.startsWith('//')) return `https:${url}`
+  return null
+}
+
+/**
  * Improved method for getting bundle keys
  */
 function getBundleKey(htmlPath, url, config) {
+  // Bundle keys never carry a query string or fragment
+  const cleanUrl = url.replace(/[?#].*$/, '')
+
   // Handle absolute path URLs
-  if (url.startsWith('/')) {
+  if (cleanUrl.startsWith('/')) {
     // Remove leading slash to match keys in bundle
-    return url.substring(1)
+    return cleanUrl.substring(1)
   }
 
-  // Handle relative paths (when config.base is relative)
+  // Handle relative paths (when config.base is relative). `join`, not
+  // `resolve` - bundle keys are relative to the output root, and `resolve`
+  // would make the key absolute against the process CWD.
   if (config.base === './' || config.base === '') {
-    return path.posix.resolve(path.posix.dirname(htmlPath), url)
+    return path.posix.join(path.posix.dirname(htmlPath), cleanUrl)
   }
 
   // Handle other cases, remove base prefix from URL
-  return url.startsWith(config.base)
-    ? url.substring(config.base.length)
-    : url
+  return cleanUrl.startsWith(config.base)
+    ? cleanUrl.substring(config.base.length)
+    : cleanUrl
+}
+
+/**
+ * Find a bundle key for a URL that did not match exactly.
+ *
+ * Matching is anchored on a path separator so `main.js` can never match
+ * `assets/vendor-main.js` - a cross-filename match would inject a valid-looking
+ * but wrong hash, which the browser rejects with no build-time error.
+ */
+export function findBundleKey(bundle, bundleKey, logger = null) {
+  const candidates = Object.keys(bundle).filter(key =>
+    key === bundleKey ||
+    key.endsWith(`/${bundleKey}`) ||
+    bundleKey.endsWith(`/${key}`)
+  )
+
+  if (candidates.length > 1 && logger) {
+    logger.warn(
+      `Ambiguous bundle key for "${bundleKey}": ${candidates.join(', ')} - using ${candidates[0]}`
+    )
+  }
+
+  return candidates[0]
 }
 
 /**
  * Calculate SRI integrity hash for a given resource
  */
 export async function calculateIntegrity(
-  bundle, 
-  htmlPath, 
-  url, 
-  options, 
-  config, 
+  bundle,
+  htmlPath,
+  url,
+  options,
+  config,
   cacheManager,
   logger = null
 ) {
-  const { 
-    ignoreMissingAsset, 
-    bypassDomains, 
-    hashAlgorithm 
+  const {
+    ignoreMissingAsset,
+    bypassDomains,
+    hashAlgorithm,
+    hashedAssets
   } = options
 
   // Skip specified domains
@@ -46,32 +107,43 @@ export async function calculateIntegrity(
     return null
   }
 
+  // With an absolute `base` (assets on a CDN) Vite emits absolute URLs for our
+  // own build output. Those must be hashed from the bundle, not fetched - the
+  // CDN may not have been deployed yet, and this is the very case SRI exists
+  // for. Checked before the network path.
+  const base = config.base || '/'
+  const ownAsset = (HTTP_RE.test(base) || base.startsWith('//')) && url.startsWith(base)
+  const fetchUrl = ownAsset ? null : externalUrl(url)
+
   let source
-  if (url.startsWith('http')) {
-    const isSupported = await checkResourceSupport(url, cacheManager.getUrlSupportCache(), logger)
+  let bundleFileName = null
+  if (fetchUrl) {
+    const isSupported = await checkResourceSupport(fetchUrl, cacheManager.getUrlSupportCache(), logger)
     if (!isSupported) return null
-    source = await fetchResource(url, cacheManager.getResourceCache(), logger)
+    source = await fetchResource(fetchUrl, cacheManager.getResourceCache(), logger)
     if (!source) return null
+  } else if (!ownAsset && SCHEME_RE.test(url)) {
+    // data:/blob: and unknown schemes cannot be resolved to a bundle asset
+    if (logger) {
+      logger.debug(`Skipping URL that is not a bundle asset: ${url}`)
+    }
+    return null
   } else {
     const bundleKey = getBundleKey(htmlPath, url, config)
     const bundleItem = bundle[bundleKey]
 
     if (!bundleItem) {
-      // Fall back to suffix match in either direction to absorb hashed
-      // filenames AND base-prefix mismatches (e.g. URL "/base/main.js" with
-      // bare bundle key "main.js"). A mismatch here just produces a wrong
-      // integrity hash, which the browser rejects — failure-closed.
-      const possibleMatch = Object.keys(bundle).find(key =>
-        key.endsWith(bundleKey) || bundleKey.endsWith(key)
-      )
+      // Fall back to a path-anchored suffix match to absorb hashed filenames
+      // AND base-prefix mismatches (e.g. URL "/base/main.js" with bare bundle
+      // key "main.js").
+      const possibleMatch = findBundleKey(bundle, bundleKey, logger)
 
       if (possibleMatch) {
         if (logger) {
           logger.debug(`Bundle key fallback: ${bundleKey} -> ${possibleMatch}`)
         }
-        source = bundle[possibleMatch].type === 'chunk'
-          ? bundle[possibleMatch].code
-          : bundle[possibleMatch].source
+        bundleFileName = possibleMatch
+        source = bundleSource(bundle[possibleMatch])
       } else if (ignoreMissingAsset) {
         if (logger) {
           logger.warn(`Asset not found in bundle: ${url} (path: ${htmlPath}, key: ${bundleKey})`)
@@ -81,16 +153,16 @@ export async function calculateIntegrity(
         throw new Error(`Asset ${url} not found in bundle (path: ${htmlPath}, key: ${bundleKey})`)
       }
     } else {
-      source = bundleItem.type === 'chunk' ? bundleItem.code : bundleItem.source
+      bundleFileName = bundleKey
+      source = bundleSource(bundleItem)
     }
   }
 
   // Ensure source is a Uint8Array or string
   if (!source) return null
 
-  if (typeof source === 'string') {
-    return `${hashAlgorithm}-${createHash(hashAlgorithm).update(source).digest('base64')}`
-  }
-
-  return `${hashAlgorithm}-${createHash(hashAlgorithm).update(Buffer.from(source)).digest('base64')}`
+  const integrity = sriHash(source, hashAlgorithm)
+  // Recorded so writeBundle can catch a later plugin rewriting these bytes
+  if (bundleFileName && hashedAssets) hashedAssets.set(bundleFileName, integrity)
+  return integrity
 }

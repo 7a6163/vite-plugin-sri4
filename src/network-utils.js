@@ -42,8 +42,21 @@ export async function checkResourceSupport(url, urlSupportCache, logger = null, 
 
       clearTimeout(timeoutId)
 
+      // Only `*` can be verified at build time. Injecting integrity also means
+      // injecting crossorigin="anonymous"; if the server answers with a
+      // concrete origin that does not match wherever the HTML ends up being
+      // served from, that turns a working script into a blocked one. Skipping
+      // is the safe outcome, but say so at warn level - silence here is what
+      // makes an unprotected resource easy to miss.
       const corsHeader = response.headers.get('access-control-allow-origin')
-      const isSupported = response.ok && (corsHeader === '*' || corsHeader?.includes('*'))
+      const isSupported = response.ok && corsHeader === '*'
+      if (response.ok && corsHeader && corsHeader !== '*' && logger) {
+        logger.warn(
+          `Skipping SRI for ${url}: Access-Control-Allow-Origin is "${corsHeader}", not "*", ` +
+          'so crossorigin="anonymous" cannot be verified at build time. ' +
+          'Add the domain to bypassDomains to silence this.'
+        )
+      }
       urlSupportCache.set(url, isSupported)
       return isSupported
     } catch (error) {
