@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 
 ### Improvements
 
+- **The plugin repositions itself instead of rewriting Vite's hook.** It used to monkey-patch the `generateBundle` of Vite's internal import-analysis plugin, permanently replacing another plugin's function and handling both the function and `{ handler }` hook shapes to do it. It now moves itself after that plugin in `config.plugins` during `configResolved` and uses an ordinary `generateBundle` of its own. Same ordering, same hashes, no surgery on code it does not own - and nothing breaks if Vite changes that hook's shape or another plugin wraps it too. The private plugin *names* are still needed to know where to move.
 - **Zero runtime dependencies.** Dropped `cross-fetch` in favour of global `fetch`, stable since Node 18 - the floor the Vite 6.4 peer range already implies. Added an explicit `engines.node: >=18` now that this is load-bearing.
 - HTML edits are expressed uniformly as `{ start, end, content }`, so an attribute removal and an attribute insertion share one code path.
 

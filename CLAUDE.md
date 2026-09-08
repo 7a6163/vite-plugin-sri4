@@ -24,20 +24,22 @@ ESM-only source in `src/`, bundled by rollup. Externals: `vite`, `cross-fetch`, 
 
 ### The hook-patching trick
 
-The HTML transform does **not** live in this plugin's own `generateBundle`. In `configResolved` it monkey-patches the `generateBundle` of Vite's internal import-analysis plugin (`vite:build-import-analysis` for Vite 6/7, `native:import-analysis-build` for the Vite 8 Rolldown path), running its own logic after the original.
+The plugin's own `generateBundle` does the work, but **only because it moves itself in `config.plugins` first**.
 
-**Do not "simplify" this to `transformIndexHtml` or an `enforce: 'post'` generateBundle.** Both were measured on Vite 8.2.2 and both run *before* the import-analysis plugin substitutes `__VITE_PRELOAD__` in entry chunks:
+Vite places `vite:build-import-analysis` (Vite 6/7) / `native:import-analysis-build` (Vite 8 Rolldown) *immediately after* `enforce: 'post'` user plugins, and those substitute `__VITE_PRELOAD__` in entry chunks inside their own `generateBundle`. Measured on Vite 8.2.2:
 
 ```
-                        entry chunk       route chunk
-transformIndexHtml      io6MKsmc4G5y      GYX+3uX7zhv/
-generateBundle (post)   io6MKsmc4G5y      GYX+3uX7zhv/
-written file            lvFyraHkqPN0      GYX+3uX7zhv/   <- entry differs
+plugin order      : sri=25, vite:build-import-analysis=26, total=37, frozen=false
+generateBundle    : io6MKsmc4G5y   (entry chunk, stale)
+writeBundle       : lvFyraHkqPN0   (entry chunk, final)
+file on disk      : lvFyraHkqPN0
 ```
 
-The entry chunk still ends `import("./about-*.js"),__VITE_PRELOAD__)` at those points and `import("./about-*.js"),[])` in the written file, so a hash taken there describes bytes that never ship — and only the entry chunk is affected, so a fixture without a dynamic import will not catch it. Wrapping the plugin's own handler is the only position after that substitution. `test/sri.test.js > injects integrity matching the actual emitted bytes` is the pin.
+So by default we would hash an entry chunk still ending `import("./x.js"),__VITE_PRELOAD__)` while the written file ends `import("./x.js"),[])`. `configResolved` therefore splices this plugin to just after the *last* matching analysis plugin. `config.plugins` is a plain unfrozen array at that point and Rollup reads it afterwards, so this takes effect.
 
-Both plugin names must stay in `VITE_INTERNAL_ANALYSIS_PLUGINS`, and both the object-form (`{ handler }`) and function-form hook shapes must be handled — Vite uses both.
+**Do not replace this with `transformIndexHtml` (`order: 'post'`) or a plain `enforce: 'post'` hook** — both were measured and both run at the stale point above. Earlier versions instead monkey-patched the analysis plugin's `generateBundle`; repositioning achieves the same ordering without rewriting another plugin's hook, and without needing to handle both the function and `{ handler }` hook shapes.
+
+Only the entry chunk is affected, so a fixture without a dynamic import will not catch a regression here. `test/sri.test.js > injects integrity matching the actual emitted bytes` is the pin; the `writeBundle` drift check is the second net.
 
 ### Bundle key resolution
 
