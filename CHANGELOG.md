@@ -11,7 +11,6 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - **`hashAlgorithm` is validated at startup.** `sri({ hashAlgorithm: 'md5' })` used to build cleanly and emit `integrity="md5-..."`, which every browser rejects — the resource was blocked with no build-time error at all. Only the three algorithms the SRI spec defines are accepted; anything else throws immediately. `crossorigin` is validated the same way.
-- **Several hash algorithms at once.** `hashAlgorithm: ['sha384', 'sha512']` emits `integrity="sha384-... sha512-..."`, which the spec allows and from which the browser picks the strongest it supports — the only way to migrate algorithms without a flag day.
 - **`crossorigin` is configurable.** `anonymous` (default) or `use-credentials`, for CDNs that require cookies or HTTP auth. Previously hardcoded.
 - **`publicDir` assets are hashed.** Files copied verbatim from `public/` never become bundle entries, so a normal `<script src="/sw.js">` failed the build under the default `ignoreMissingAsset: false`. They are now read from disk, with the resolved path checked to stay inside `publicDir` so a URL can never reach outside the project.
 - **`skip-sri` attribute.** Per-tag opt-out for cases `bypassDomains` cannot express, which only reaches external hosts. The marker attribute is stripped from the output.

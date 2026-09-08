@@ -38,12 +38,12 @@ function withTrailingSlash(base) {
 /**
  * Hash every non-HTML output, keyed by bundle file name.
  */
-function hashBundle(bundle, hashAlgorithms) {
+function hashBundle(bundle, hashAlgorithm) {
   const hashes = {}
   for (const [fileName, item] of Object.entries(bundle)) {
     if (HTML_RE.test(fileName)) continue
     const source = bundleSource(item)
-    if (source) hashes[fileName] = sriHash(source, hashAlgorithms)
+    if (source) hashes[fileName] = sriHash(source, hashAlgorithm)
   }
   return hashes
 }
@@ -51,19 +51,13 @@ function hashBundle(bundle, hashAlgorithms) {
 /**
  * Reject configuration that would build cleanly and then fail in the browser.
  */
-function validateOptions(hashAlgorithms, crossorigin) {
-  if (hashAlgorithms.length === 0) {
-    throw new Error(`[${DEFAULT_PLUGIN_NAME}] hashAlgorithm must name at least one algorithm`)
-  }
-
-  for (const algorithm of hashAlgorithms) {
-    if (!SUPPORTED_HASH_ALGORITHMS.includes(algorithm)) {
-      throw new Error(
-        `[${DEFAULT_PLUGIN_NAME}] unsupported hashAlgorithm "${algorithm}". ` +
-        `The SRI spec defines ${SUPPORTED_HASH_ALGORITHMS.join(', ')}; browsers reject ` +
-        `anything else, so the build would succeed and the resource would be blocked.`
-      )
-    }
+function validateOptions(hashAlgorithm, crossorigin) {
+  if (!SUPPORTED_HASH_ALGORITHMS.includes(hashAlgorithm)) {
+    throw new Error(
+      `[${DEFAULT_PLUGIN_NAME}] unsupported hashAlgorithm "${hashAlgorithm}". ` +
+      `The SRI spec defines ${SUPPORTED_HASH_ALGORITHMS.join(', ')}; browsers reject ` +
+      `anything else, so the build would succeed and the resource would be blocked.`
+    )
   }
 
   if (!CROSSORIGIN_VALUES.includes(crossorigin)) {
@@ -85,10 +79,7 @@ function sri(options = {}) {
     importmap = false
   } = options
 
-  // One or several: several emit a space-separated list and the browser picks
-  // the strongest it supports.
-  const hashAlgorithms = Array.isArray(hashAlgorithm) ? hashAlgorithm : [hashAlgorithm]
-  validateOptions(hashAlgorithms, crossorigin)
+  validateOptions(hashAlgorithm, crossorigin)
 
   // Create cache manager and logger instances for this plugin instance
   const cacheManager = new CacheManager()
@@ -112,7 +103,7 @@ function sri(options = {}) {
         const item = bundle[fileName]
         if (!item) continue
         const source = bundleSource(item)
-        if (source && sriHash(source, hashAlgorithms) !== integrity) {
+        if (source && sriHash(source, hashAlgorithm) !== integrity) {
           drifted.push(fileName)
         }
       }
@@ -139,7 +130,7 @@ function sri(options = {}) {
       const transformer = createTransformer({
         ignoreMissingAsset,
         bypassDomains,
-        hashAlgorithms,
+        hashAlgorithm,
         crossorigin,
         hashedAssets
       }, config, cacheManager, logger)
@@ -156,7 +147,7 @@ function sri(options = {}) {
         handled.add(bundle)
 
         // Computed before emitting anything so the manifest never hashes itself
-        const hashes = manifest || importmap ? hashBundle(bundle, hashAlgorithms) : null
+        const hashes = manifest || importmap ? hashBundle(bundle, hashAlgorithm) : null
 
         const htmlFiles = Object.entries(bundle).filter(
           ([, chunk]) =>

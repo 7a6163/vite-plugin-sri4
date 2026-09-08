@@ -6,9 +6,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import sri from '../src/index.js'
 
-const hash = (algorithm, source) =>
-  `${algorithm}-${createHash(algorithm).update(source).digest('base64')}`
-const sha384 = source => hash('sha384', source)
+const sha384 = source =>
+  `sha384-${createHash('sha384').update(source).digest('base64')}`
 
 let root
 
@@ -86,17 +85,6 @@ describe('real vite build', () => {
     const jsFile = Object.keys(byName).find(f => f.endsWith('.js'))
     expect(html).toContain('https://cdn.example.com/')
     expect(html).toContain(sha384(byName[jsFile].code))
-  })
-
-  test('emits every requested algorithm in one integrity attribute', async () => {
-    const { byName, html } = await buildWith({ hashAlgorithm: ['sha384', 'sha512'] })
-
-    const jsFile = Object.keys(byName).find(f => f.endsWith('.js'))
-    const code = byName[jsFile].code
-
-    // The spec allows a space-separated list; the browser picks the strongest
-    // it supports, which is what makes an algorithm migration possible.
-    expect(html).toContain(`${hash('sha384', code)} ${hash('sha512', code)}`)
   })
 
   test('does not duplicate the crossorigin Vite already emitted', async () => {
@@ -394,24 +382,6 @@ describe('regressions', () => {
 
     await run({ crossorigin: 'use-credentials' }, bundle)
     expect(bundle['index.html'].source).toContain('crossorigin="use-credentials"')
-  })
-
-  test('records the full multi-algorithm string for the drift check', async () => {
-    const plugin = sri({ hashAlgorithm: ['sha256', 'sha512'], logLevel: 'silent' })
-    const config = { base: '/', plugins: [analysisPlugin()] }
-    plugin.configResolved(config)
-
-    const bundle = {
-      'index.html': html('<script src="/main.js"></script>'),
-      'main.js': chunk('main.js', 'console.log(1)')
-    }
-    await config.plugins[0].generateBundle.call({ emitFile() {} }, {}, bundle)
-    expect(bundle['index.html'].source).toContain(
-      `${hash('sha256', 'console.log(1)')} ${hash('sha512', 'console.log(1)')}`
-    )
-
-    bundle['main.js'].code = 'console.log(2)'
-    expect(() => plugin.writeBundle({}, bundle)).toThrow(/content changed after integrity/)
   })
 
   test('caches survive until closeBundle', () => {
