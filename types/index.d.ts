@@ -26,6 +26,18 @@ export interface SriOptions {
   bypassDomains?: string[]
 
   /**
+   * Hostnames whose bytes you vouch for. An external resource is normally only
+   * hashed when its origin declares the URL immutable (`Cache-Control:
+   * immutable`, or a max-age of a year or more); a host listed here is hashed
+   * regardless. Matches the host itself and its subdomains.
+   *
+   * Use it for a stable host that does not set the header - not to force SRI
+   * onto a vendor's rolling URL, which will break on their next deploy.
+   * @default []
+   */
+  trustDomains?: string[]
+
+  /**
    * Warn instead of failing the build when an asset resolves to neither a
    * bundle entry nor a file in `publicDir`.
    * @default false
