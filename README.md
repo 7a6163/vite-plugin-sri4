@@ -14,6 +14,7 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - [Plugin Options](#plugin-options)
 - [Dynamic Routes](#dynamic-routes)
 - [When SRI Actually Helps](#when-sri-actually-helps)
+- [How It Attaches Hashes](#how-it-attaches-hashes)
 - [Example Project](#example-project)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -152,6 +153,27 @@ If everything is served from a single origin, SRI buys much less than it appears
 <!-- built output -->
 <script src="/legacy.js"></script>
 ```
+
+## How It Attaches Hashes
+
+There are three places a Vite plugin can compute SRI hashes, and they are not equivalent. This one matters more than it looks, so it is worth writing down.
+
+**In `transformIndexHtml`.** The obvious choice, and the one that reads best — you get the finished HTML and the bundle on the context. It produces wrong hashes for entry chunks. Vite's import-analysis plugin substitutes `__VITE_PRELOAD__` inside its own `generateBundle`, which runs *after* `transformIndexHtml`, so an entry chunk still reads `import("./route.js"), __VITE_PRELOAD__)` at that point while the written file reads `import("./route.js"), [])`. The hash describes bytes that never ship, and the browser rejects the file with no build error at all.
+
+**In a plain `enforce: 'post'` `generateBundle`.** Same problem. Vite places its import-analysis plugin immediately after post user plugins, so a post hook is still one step too early.
+
+**Where this plugin does it.** During `configResolved` it moves itself after that plugin in `config.plugins`, then works in an ordinary `generateBundle`. Measured on Vite 8.2.2, hashing the entry chunk:
+
+| Hook | Entry chunk | Matches shipped file |
+|---|---|---|
+| `transformIndexHtml` (post) | `io6MKsmc4G5y` | ✗ |
+| `generateBundle` (post) | `io6MKsmc4G5y` | ✗ |
+| after repositioning | `lvFyraHkqPN0` | ✓ |
+| written file | `lvFyraHkqPN0` | — |
+
+Only the entry chunk is affected, so a build without a dynamic import will not reveal the difference. As a second safeguard, every hashed file is re-hashed in `writeBundle` and the build fails if anything changed after the hash was taken.
+
+This ordering constraint was first identified by [vite-plugin-sri3](https://github.com/yoyo930021/vite-plugin-sri3), which this plugin began as a fork of. Beyond it, this plugin adds `crossorigin` injection, a CORS pre-check with timeouts and retries for external resources, import map and manifest output for dynamically imported routes, `publicDir` resolution, and the drift check above.
 
 ## Example Project
 
