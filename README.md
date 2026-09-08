@@ -13,6 +13,7 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - [Usage](#usage)
 - [Plugin Options](#plugin-options)
 - [Dynamic Routes](#dynamic-routes)
+- [External Resources](#external-resources)
 - [When SRI Actually Helps](#when-sri-actually-helps)
 - [How It Attaches Hashes](#how-it-attaches-hashes)
 - [Example Project](#example-project)
@@ -94,7 +95,7 @@ Output:
 * `crossorigin` (string):
   Value for the injected `crossorigin` attribute: `anonymous` (default) or `use-credentials`. Use the latter for a CDN that requires cookies or HTTP auth. Tags that already declare a `crossorigin` are left alone.
 * `bypassDomains` (Array<string>):
-  Array of domain names where SRI injection should be skipped. This allows external resources from specified domains to be excluded from SRI checks (for example, when they may not support CORS).
+  Extra domain names where SRI injection should be skipped — for external resources that do not support CORS, or that serve different bytes to different clients. Subdomains are matched too. Your list is **merged with** the built-in default (`fonts.googleapis.com`), not a replacement for it, so passing this option never re-exposes the default case. See [External resources](#external-resources).
 * `ignoreMissingAsset` (boolean):
   When true, warns instead of failing the build for assets found in neither the bundle nor `publicDir`. Default is `false`, which fails the build rather than shipping a tag with no integrity.
 * `logLevel` (string):
@@ -134,6 +135,25 @@ This is the only mechanism available when the build produces no HTML asset.
 ### Caveat for both
 
 Hashes are computed during the build. A plugin that mutates chunk contents after this one (`@vitejs/plugin-legacy`, compression plugins that rewrite in place) would invalidate them, so the plugin re-hashes every file it touched in `writeBundle` and fails the build if anything drifted. You get a build error rather than a page that only breaks in the browser.
+
+## External resources
+
+The `writeBundle` drift check above covers **your own build outputs only**. An external `<script src>` or `<link rel="stylesheet">` pointing at another origin is fetched **once, at build time, from your build machine**, and the hash is taken from that copy. Nothing re-checks it afterwards, and nothing can: the origin is free to serve different bytes to the browser than it served to your CI.
+
+Two gates decide whether an external resource gets an `integrity` attribute at all. Both must pass:
+
+1. **`Access-Control-Allow-Origin: *`.** Injecting `integrity` also injects `crossorigin`, so a response scoped to one specific origin would turn a working resource into a blocked one.
+2. **No `Cache-Control: private`.** `private` is the origin declaring the response unsafe to share between clients — and a response that cannot be shared between clients cannot have a hash pinned to it either. Google Fonts is the case in the wild: it answers `Access-Control-Allow-Origin: *` while serving a different `@font-face` block per client, so the CORS gate alone waves it through and the browser then blocks a stylesheet whose hash matches nothing.
+
+Failing either gate leaves the tag untouched and logs a warning naming the URL and the reason. `Vary` is deliberately *not* used as a gate — Google varies on `User-Agent` without declaring it there, so a `Vary`-based check lets exactly this resource through.
+
+`fonts.googleapis.com` is bypassed by default, so the common case needs no configuration and costs no build-time request. For anything else, `bypassDomains` is the control:
+
+```js
+sri({ bypassDomains: ['www.googletagmanager.com'] })
+```
+
+Neither gate can prove byte-stability in general — they only catch origins that declare the problem. For a resource you need SRI on, self-host it, or pin a versioned, immutable URL.
 
 ## When SRI Actually Helps
 

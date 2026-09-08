@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+
+- **External resources are gated on byte-stability, not just CORS reachability.** `checkResourceSupport()` returned true on `response.ok && Access-Control-Allow-Origin: *` and treated that as proof the bytes fetched at build time are the bytes a browser receives. They are different properties. Where they diverge the injected hash matches nothing, the browser blocks the resource, and the build still exits 0. A response is now also skipped when it carries `Cache-Control: private` - the origin declaring it unsafe to share between clients, and a response that cannot be shared between clients cannot have a hash pinned to it either. The skip warns, naming the URL, the header and `bypassDomains`, in the same shape as the existing non-`*` CORS warning. `Vary` is deliberately not the signal: Google Fonts varies on `User-Agent` without declaring it (`vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`), so a `Vary`-based gate lets exactly this resource through.
+
+  Google Fonts is the case in the wild, and it regressed in 4.1.0: the pre-4.1 stylesheet regex required `rel` before `href`, and Google's own snippet is `<link href="..." rel="stylesheet">`, so external stylesheets went untouched. Order-independent attribute matching started hashing them. `www.googletagmanager.com` answers `private, max-age=900` with `Access-Control-Allow-Origin: *` and is caught by the same gate.
+
+- **`fonts.googleapis.com` is bypassed by default**, so the common case needs no configuration and costs no build-time request. The default list is *merged with* the user's `bypassDomains` rather than used as its default value - as a destructuring default, anyone passing the option would have silently replaced it and got the broken build back.
+
 ## [4.2.0] - 2026-09-08
 
 ### Documentation
