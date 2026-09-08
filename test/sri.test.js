@@ -130,19 +130,20 @@ describe('real vite build', () => {
 
 // Regressions. These are the failure modes that ship a green build and only
 // break in the browser, so each one is pinned.
+const analysisPlugin = () => ({ name: 'vite:build-import-analysis', generateBundle() {} })
+
+const run = async (options, bundle, config = {}) => {
+  const plugin = sri({ logLevel: 'silent', ...options })
+  const resolved = { base: '/', plugins: [analysisPlugin()], ...config }
+  plugin.configResolved(resolved)
+  await resolved.plugins[0].generateBundle.call({ emitFile() {} }, {}, bundle)
+  return bundle
+}
+
+const html = source => ({ type: 'asset', fileName: 'index.html', source })
+const chunk = (fileName, code) => ({ type: 'chunk', fileName, code })
+
 describe('regressions', () => {
-  const analysisPlugin = () => ({ name: 'vite:build-import-analysis', generateBundle() {} })
-
-  const run = async (options, bundle, config = {}) => {
-    const plugin = sri({ logLevel: 'silent', ...options })
-    const resolved = { base: '/', plugins: [analysisPlugin()], ...config }
-    plugin.configResolved(resolved)
-    await resolved.plugins[0].generateBundle.call({ emitFile() {} }, {}, bundle)
-    return bundle
-  }
-
-  const html = source => ({ type: 'asset', fileName: 'index.html', source })
-  const chunk = (fileName, code) => ({ type: 'chunk', fileName, code })
 
   test('never matches a bundle key across a filename boundary', async () => {
     const bundle = {
