@@ -26,7 +26,9 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - **Automatic SRI Generation:** Computes SRI hashes for assets (chunks and files) using a configurable algorithm (default is `sha384`).
 - **HTML Injection:** Automatically injects `integrity` and `crossorigin` attributes into `<script>` and `<link>` tags in your HTML.
 - **CORS Support Check:** For external resources, a CORS check is performed to verify access via `Access-Control-Allow-Origin`.
-- **Bypass Domains:** Option to specify domains to bypass SRI injection.
+- **Bypass Domains:** Option to specify domains to bypass SRI injection, plus a `skip-sri` attribute to opt out a single tag.
+- **Public Directory Support:** Assets served verbatim from `publicDir` are hashed from disk, not just bundle outputs.
+- **Zero Dependencies:** No runtime dependencies, and TypeScript definitions are included.
 - **Missing Asset Handling:** Configurable warning suppression for missing assets.
 - **Robust Content Support:** Handles various content types including strings, Buffer, and Uint8Array.
 - **Dynamic Routes:** Optional import map integrity and an SRI manifest cover `import()`-loaded chunks and SSR builds, which have no build-time HTML tag to rewrite.
@@ -89,7 +91,7 @@ Output:
 * `bypassDomains` (Array<string>):
   Array of domain names where SRI injection should be skipped. This allows external resources from specified domains to be excluded from SRI checks (for example, when they may not support CORS).
 * `ignoreMissingAsset` (boolean):
-  When true, suppresses warnings for assets that are not found in the bundle. Default is `false`.
+  When true, warns instead of failing the build for assets found in neither the bundle nor `publicDir`. Default is `false`, which fails the build rather than shipping a tag with no integrity.
 * `logLevel` (string):
   Log verbosity. One of `silent`, `error`, `warn`, `info`, `debug`. Default is `warn`. Use `debug` to see per-resource decisions during the build.
 * `importmap` (boolean):
@@ -133,6 +135,19 @@ Hashes are computed during the build. A plugin that mutates chunk contents after
 SRI is worth the most when your HTML and your assets have **different trust boundaries** - typically HTML served from your own origin and JS/CSS served from a CDN (`base: 'https://cdn.example.com/'`). If the CDN is compromised or a cache is poisoned, the integrity attribute in your origin-served HTML is what stops the browser from running the tampered file. That is the case this plugin is built for.
 
 If everything is served from a single origin, SRI buys much less than it appears to: an attacker who can rewrite `/assets/index-abc123.js` on your server can usually rewrite the `index.html` carrying its hash just as easily. It is not useless - it narrows some deploy and cache-layer mistakes - but for same-origin builds, a Content Security Policy and Vite's default hashed, immutable filenames do more for you than SRI does. Enable it because it is cheap, not because it closes the hole you think it closes.
+
+### Skipping a Single Tag
+
+`bypassDomains` only reaches external hosts. To exclude one specific element, add `skip-sri` to it. The attribute is stripped from the output:
+
+```html
+<script skip-sri src="/legacy.js"></script>
+```
+
+```html
+<!-- built output -->
+<script src="/legacy.js"></script>
+```
 
 ## Example Project
 
