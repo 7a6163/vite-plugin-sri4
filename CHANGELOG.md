@@ -10,7 +10,7 @@ External resources are the whole of this release. Nothing here touches how your 
 
 - **An external resource is hashed only when its origin declares the URL immutable.** Previously any resource that answered `Access-Control-Allow-Origin: *` got an `integrity` attribute. That establishes the resource is reachable and CORS-eligible, and treats it as proof the resource is *byte-stable* — that the bytes fetched at build time are the bytes a browser will receive. Those are different properties, and where they diverge the injected hash matches nothing, the browser blocks the resource, and the build still exits 0.
 
-  An `integrity` attribute pins one snapshot of bytes forever, so it is only correct on a URL whose bytes never change — and the origin is the only party that knows. It now has to say so: `Cache-Control: immutable`, or a `max-age` of a year or more. Everything else is left alone, with a warning naming the URL and the reason.
+  An `integrity` attribute pins one snapshot of bytes forever, so it is only correct on a URL whose bytes never change — and the origin is the only party that knows. It now has to say so: `Cache-Control: immutable`, or a `max-age` of a year or more, with nothing in the same header contradicting it. `private`, `no-store` and `no-cache` each veto whatever else it claims — freshness and shareability are orthogonal, so a per-client response can carry a long `max-age`, and `no-cache, max-age=<long>` is a real CDN spelling of "cache it, but revalidate every time". Everything else is left alone, with a warning naming the URL and the reason.
 
   The threshold separates two clusters the CDNs themselves created, rather than splitting a spectrum:
 
@@ -43,6 +43,8 @@ External resources are the whole of this release. Nothing here touches how your 
 ### Bug Fixes
 
 - **External `<link rel="stylesheet">` no longer ships a hash that can never match (regression in 4.1.0).** Google Fonts serves a different `@font-face` block per client and answers `Access-Control-Allow-Origin: *`, so it passed the 4.1/4.2 CORS gate and got an integrity the browser could never verify — a stylesheet blocked in production, from a build that exited 0 with no warning. The pre-4.1 stylesheet regex required `rel` before `href` and Google's own snippet is `<link href="…" rel="stylesheet">`, so these tags were never matched before; order-independent attribute matching in 4.1.0 started hashing them, and anyone on `^4.0.0` picked it up on their next install. The immutability check above skips it (`private, max-age=86400`), as it does `www.googletagmanager.com` (`private, max-age=900`).
+
+- **`bypassDomains` now applies to protocol-relative URLs.** `//cdn.example.com/lib.js` is fetched as `https://…`, but the bypass check matched the raw attribute value, and the matcher requires a scheme — so a host the user had explicitly excluded was fetched and hashed anyway. Present since `bypassDomains` existed; it became visible in this release because `trustDomains` matched the normalized URL and the two options then disagreed about the same tag.
 
 - **Every skipped external resource now says why.** A `HEAD` that failed, or a response with no `Access-Control-Allow-Origin` at all, used to skip in silence — only a *concrete* non-`*` origin warned. `cdn.tailwindcss.com` (a 302 with no CORS header) shipped with no integrity and nothing in the log.
 

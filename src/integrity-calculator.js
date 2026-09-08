@@ -150,11 +150,6 @@ export async function calculateIntegrity(
     hashedAssets
   } = options
 
-  // Skip specified domains
-  if (matchesDomain(url, bypassDomains, logger)) {
-    return null
-  }
-
   // With an absolute `base` (assets on a CDN) Vite emits absolute URLs for our
   // own build output. Those must be hashed from the bundle, not fetched - the
   // CDN may not have been deployed yet, and this is the very case SRI exists
@@ -162,6 +157,15 @@ export async function calculateIntegrity(
   const base = config.base || '/'
   const ownAsset = (HTTP_RE.test(base) || base.startsWith('//')) && url.startsWith(base)
   const fetchUrl = ownAsset ? null : externalUrl(url)
+
+  // Both domain options match the URL that would actually be fetched.
+  // `matchesDomain` needs a scheme, so matching the raw `url` silently missed
+  // every protocol-relative `//host/path` - and `trustDomains` below, which
+  // already saw the normalized form, would then disagree with `bypassDomains`
+  // about the same tag.
+  if (matchesDomain(fetchUrl ?? url, bypassDomains, logger)) {
+    return null
+  }
 
   let source
   let bundleFileName = null
