@@ -12,6 +12,8 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - [Installation](#installation)
 - [Usage](#usage)
 - [Plugin Options](#plugin-options)
+- [Dynamic Routes](#dynamic-routes)
+- [When SRI Actually Helps](#when-sri-actually-helps)
 - [Example Project](#example-project)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -27,7 +29,8 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - **Bypass Domains:** Option to specify domains to bypass SRI injection.
 - **Missing Asset Handling:** Configurable warning suppression for missing assets.
 - **Robust Content Support:** Handles various content types including strings, Buffer, and Uint8Array.
-- **Vite Compatibility:** Compatible with Vite 7.0 and Vite 8.0 (including the Rolldown-based native build path).
+- **Dynamic Routes:** Optional import map integrity and an SRI manifest cover `import()`-loaded chunks and SSR builds, which have no build-time HTML tag to rewrite.
+- **Vite Compatibility:** Compatible with Vite 6.4, 7.0 and 8.0 (including the Rolldown-based native build path). `6.4` is the floor because it is the only Vite 6 line still receiving upstream security patches.
 
 ## Installation
 
@@ -54,7 +57,12 @@ export default defineConfig({
       // Optional. Suppress warnings for missing assets.
       ignoreMissingAsset: false,
       // Optional. Log verbosity: 'silent' | 'error' | 'warn' | 'info' | 'debug'. Defaults to 'warn'.
-      logLevel: 'warn'
+      logLevel: 'warn',
+      // Optional. Inject an import map carrying integrity for every JS chunk,
+      // covering dynamically imported routes. Defaults to false.
+      importmap: false,
+      // Optional. Emit dist/sri-manifest.json for SSR to read. Defaults to false.
+      manifest: false
     })
   ]
 });
@@ -84,6 +92,47 @@ Output:
   When true, suppresses warnings for assets that are not found in the bundle. Default is `false`.
 * `logLevel` (string):
   Log verbosity. One of `silent`, `error`, `warn`, `info`, `debug`. Default is `warn`. Use `debug` to see per-resource decisions during the build.
+* `importmap` (boolean):
+  Inject a `<script type="importmap">` containing an `integrity` map for every JS chunk in the build. Default is `false`. See [Dynamic routes](#dynamic-routes).
+* `manifest` (boolean):
+  Emit `sri-manifest.json` alongside the build, mapping every non-HTML output file to its SRI hash. Default is `false`. See [Dynamic routes](#dynamic-routes).
+
+## Dynamic routes
+
+Rewriting HTML tags can only protect resources that have a tag at build time. A route loaded with `import()` has none - Vite's preload helper creates the `<link rel="modulepreload">` at runtime - and an SSR build emits no HTML at all. Two options cover those cases.
+
+### `importmap: true` (client-side dynamic imports)
+
+Emits an import map whose `integrity` key covers every JS chunk, including chunks only ever reached through `import()`:
+
+```html
+<script type="importmap">{"integrity":{"/assets/about-a1b2c3.js":"sha384-..."}}</script>
+```
+
+The map is injected before the first `<script>` so it applies to every module. Engines without support ignore the `integrity` key rather than failing, so this degrades safely - but check current browser support before relying on it as your only protection.
+
+### `manifest: true` (SSR / server-rendered HTML)
+
+Emits `sri-manifest.json` mapping output file names to hashes, which a server rendering HTML per request can read:
+
+```json
+{
+  "assets/index-a1b2c3.js": "sha384-...",
+  "assets/index-d4e5f6.css": "sha384-..."
+}
+```
+
+This is the only mechanism available when the build produces no HTML asset.
+
+### Caveat for both
+
+Hashes are computed during the build. A plugin that mutates chunk contents after this one (`@vitejs/plugin-legacy`, compression plugins that rewrite in place) would invalidate them, so the plugin re-hashes every file it touched in `writeBundle` and fails the build if anything drifted. You get a build error rather than a page that only breaks in the browser.
+
+## When SRI Actually Helps
+
+SRI is worth the most when your HTML and your assets have **different trust boundaries** - typically HTML served from your own origin and JS/CSS served from a CDN (`base: 'https://cdn.example.com/'`). If the CDN is compromised or a cache is poisoned, the integrity attribute in your origin-served HTML is what stops the browser from running the tampered file. That is the case this plugin is built for.
+
+If everything is served from a single origin, SRI buys much less than it appears to: an attacker who can rewrite `/assets/index-abc123.js` on your server can usually rewrite the `index.html` carrying its hash just as easily. It is not useless - it narrows some deploy and cache-layer mistakes - but for same-origin builds, a Content Security Policy and Vite's default hashed, immutable filenames do more for you than SRI does. Enable it because it is cheap, not because it closes the hole you think it closes.
 
 ## Example Project
 

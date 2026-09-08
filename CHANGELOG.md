@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+
+- **Dynamic route support.** Two opt-in options cover resources that have no build-time HTML tag to rewrite:
+  - `importmap: true` injects `<script type="importmap">` carrying an `integrity` map for every JS chunk, which is the only mechanism that reaches modules pulled in at runtime by `import()` / Vite's preload helper. Engines without support ignore the key rather than failing.
+  - `manifest: true` emits `sri-manifest.json` mapping every non-HTML output to its hash, for SSR builds that render HTML per request. It is emitted even when the bundle contains no HTML asset at all.
+  - Hashes for both are computed before any `emitFile`, so the manifest never hashes itself. Note that a plugin mutating chunk contents after `generateBundle` (`@vitejs/plugin-legacy`, in-place compression) invalidates them.
+- **Vite 6 support restored.** Peer range widened back to `^6.4.0 || ^7.0.0 || ^8.0.0`, verified against Vite `6.4.3`, `7.0.0`, `7.3.6` and `8.x` with a real build. The Vite 6 floor is `6.4` rather than `6.0` because `6.4` is the only Vite 6 line upstream still patches.
+
+### Bug Fixes
+
+- **Integrity drift is now detected.** Every hashed file is re-hashed in `writeBundle` and the build fails if a plugin ordered after this one rewrote it. Previously this was a documentation caveat only: the build stayed green and the browser silently refused the file.
+- **The `ignoreMissingAsset: false` default now actually fails the build.** `generateBundle` caught and downgraded the thrown error to a warning, so an unresolvable asset shipped a tag with no integrity and a green build. Because collection runs under `Promise.all`, one missing asset also stripped SRI from *every* tag in that HTML file.
+- **Assets on a CDN are hashed from the bundle.** With an absolute `base` (`https://cdn.example.com/`) Vite emits absolute URLs for your own output, and every one of them took the network path: three retries against a CDN that has not been deployed yet, then shipping without integrity. This is the scenario SRI exists for, and it did not work.
+- **A decoy `data-src` / `data-href` no longer hijacks the URL.** Attribute matching used `\b`, which matches after the hyphen, so `<script data-src="/track.js" src="/main.js">` resolved `/track.js` - a build failure, or a hash for the wrong file.
+- **`manifest`/`importmap` no longer break when both analysis plugin names are present.** The wrapped hook ran once per patched plugin, so `emitFile` threw on the duplicate manifest name and the import map warned about the one it had just injected.
+- **A non-`*` `Access-Control-Allow-Origin` is skipped again, but loudly.** Accepting any origin meant injecting `crossorigin="anonymous"` on a resource whose CORS policy does not match the serving origin, turning a working script into a blocked one. Only `*` is verifiable at build time; anything else now warns instead of being silently dropped.
+- **Protocol-relative URLs are fetched, not skipped.** `//cdn.example.com/x.js` is a real HTTP reference, and lumping it in with `data:`/`blob:` shipped it unprotected.
+- **The drift check no longer fires for tags left alone.** A tag that already carries its own `integrity` is now skipped before hashing, so a later rewrite of that chunk cannot fail the build over a hash this plugin never injected.
+- **Bundle-key fallback no longer matches across filename boundaries.** `key.endsWith(bundleKey)` let `/main.js` match `assets/vendor-main.js` and inject that file's hash — the browser rejects the entry script and the build reports nothing. Matching is now anchored on a path separator, and ambiguous candidates warn.
+- **No duplicate `crossorigin` attribute.** The idempotency check required `crossorigin=`, missing the valueless form Vite itself emits, producing `<script crossorigin ... crossorigin="anonymous">`.
+- **Self-closing tags stay well-formed.** Insertion landed after the `/`, producing `<link ... / integrity="...">`.
+- **`rel` may follow `href`.** The stylesheet and modulepreload patterns required `rel` before `href`, silently skipping valid tags. Attributes are now read out of the matched tag instead of being baked into the tag regex.
+- **Caches are cleared in `closeBundle`, not `buildEnd`.** Rollup runs `buildEnd` before the output phase, so the caches were emptied before they were ever populated — external resources were refetched on every watch-mode rebuild.
+- **Non-bundle URLs are skipped instead of treated as missing assets.** `data:`, `blob:`, protocol-relative `//host/...` and unknown schemes previously took the bundle-lookup path and threw.
+- **Asset URLs with a query string or fragment resolve.** `main.js?v=1` is now stripped to `main.js` before bundle lookup.
+- **Relative-base bundle keys use `path.posix.join`, not `resolve`.** `resolve` produced a key absolute against the process CWD, which only ever matched via the suffix fallback.
+- **HTML assets whose source is a `Uint8Array` are decoded**, rather than stringified into `"60,33,100,..."` and silently left without SRI.
+- **A concrete `Access-Control-Allow-Origin` counts as CORS support.** Only `*` was accepted, so a CDN scoped to your origin was silently skipped; the `includes('*')` branch also wrongly accepted `https://*.example.com`.
+
+### Tests
+
+- Added `test/sri.test.js`. The existing suite mocks `crypto`, so it never verified a real hash; the new file runs an actual `vite build` over a temp fixture containing a dynamic import and checks the injected hashes against the emitted bytes, plus pins each regression above.
+- Upgraded the build/test toolchain: `vitest` and `@vitest/coverage-v8` 3 -> 5, `@rollup/plugin-commonjs` 25 -> 29, `@rollup/plugin-node-resolve` 15 -> 16, plus `rollup` and `vite` to current. No source or config changes were needed; both dist formats smoke-tested after the rebuild.
+- Removed the unused `memfs` devDependency - it was declared but never imported, the same dead weight `cheerio` was in 4.0.0.
+- Bumped CI actions to their current majors (`actions/checkout@v7`, `actions/setup-node@v7`, `codecov/codecov-action@v7`) and moved both workflows to Node `24`, the Active LTS - Node `22` entered maintenance on 2025-10-21. All codecov inputs in use (`token`, `files`, `directory`, `report_type`, `fail_ci_if_error`) are unchanged in v7.
+- Added a `compat` CI matrix running the real-build tests against Vite `6.4`, `7.0` and `8`, so the peer range is verified rather than asserted. The existing job still owns coverage reporting on the pinned devDependency.
+- Removed a broken `path` mock from `test/index.test.js` that targeted `path` rather than `node:path` and exposed no default export, so the relative-base code path was never exercised.
+
+- **`logLevel: 'silent'` now actually silences output.** The level lookup used `||`, and `silent` is `0`, so it fell through to `warn` — the one level whose entire purpose is suppression behaved identically to a typo.
+
+### Documentation
+
+- Added a Dynamic Routes section to the README covering both new options and their shared staleness caveat.
+- Added a "When SRI Actually Helps" section: SRI earns its keep when HTML and assets have different trust boundaries (origin HTML, CDN assets). For a single-origin build, an attacker who can rewrite the asset can usually rewrite the HTML carrying its hash too, and CSP plus hashed immutable filenames do more.
+- Documented in `CLAUDE.md`, with measurements, why the import-analysis patching cannot be replaced by `transformIndexHtml` or an `enforce: 'post'` generateBundle.
+- `example/vite.config.js` used `debug: true`, which has not been an option since 4.0.0; corrected to `logLevel: 'debug'`.
+
 ## [4.0.0] - 2026-05-14
 
 ### Breaking Changes
