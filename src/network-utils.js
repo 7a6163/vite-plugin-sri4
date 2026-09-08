@@ -29,7 +29,8 @@ const IMMUTABLE_MAX_AGE = 31536000
 
 /**
  * Does the origin declare this URL's bytes immutable - `Cache-Control:
- * immutable`, or a max-age of a year or more?
+ * immutable`, or a max-age of a year or more - and nothing in the same header
+ * contradicting it?
  *
  * Measured, because the split is what makes this usable as a gate. Pinned
  * third-party libraries, the case SRI actually exists for:
@@ -55,17 +56,41 @@ const IMMUTABLE_MAX_AGE = 31536000
 function isImmutableResponse(cacheControl) {
   if (!cacheControl) return false
 
+  let immutable = false
+
   for (const directive of cacheControl.split(',')) {
-    const token = directive.trim().toLowerCase()
     // Token equality, not substring: `x-immutable` is not this directive
-    if (token === 'immutable') return true
+    const token = directive.trim().toLowerCase()
+
+    // These veto whatever else the header claims, and are checked against the
+    // whole header rather than returning early, because freshness and
+    // shareability are orthogonal - a per-client response can carry a long
+    // max-age, and `no-cache, max-age=<long>` is a real CDN spelling of "cache
+    // it, but revalidate every time", i.e. the bytes may have changed.
+    //
+    // The qualified forms (`private="set-cookie"`, `no-cache="set-cookie"`)
+    // only scope the directive to those headers, so vetoing on them is
+    // stricter than the spec requires. That is the right way to be wrong here:
+    // the cost is losing SRI on a resource that would have been fine, and it
+    // is logged. Not vetoing costs a page that only breaks in the browser.
+    if (
+      token === 'no-store' ||
+      token === 'private' || token.startsWith('private=') ||
+      token === 'no-cache' || token.startsWith('no-cache=')
+    ) {
+      return false
+    }
+
+    if (token === 'immutable') immutable = true
+
     if (token.startsWith('max-age=')) {
-      const seconds = Number(token.slice('max-age='.length))
-      if (Number.isFinite(seconds) && seconds >= IMMUTABLE_MAX_AGE) return true
+      // RFC 9111 permits a quoted-string value: `max-age="31536000"`
+      const seconds = Number(token.slice('max-age='.length).replace(/^"|"$/g, ''))
+      if (Number.isFinite(seconds) && seconds >= IMMUTABLE_MAX_AGE) immutable = true
     }
   }
 
-  return false
+  return immutable
 }
 
 /**
@@ -139,7 +164,9 @@ export async function checkResourceSupport(url, urlSupportCache, logger = null, 
             `Skipping SRI for ${url}: Cache-Control is ` +
             `${cacheControl ? `"${cacheControl}"` : 'absent'}, so the origin does not declare ` +
             'this URL immutable and its bytes may differ from the ones hashed here. Pin a ' +
-            'version in the URL, or add the domain to trustDomains if you know it is stable.'
+            'version in the URL, or add the domain to bypassDomains to accept it unprotected. ' +
+            'Only reach for trustDomains on a host you control - forcing a hash onto a ' +
+            "vendor's rolling URL ships a page that breaks on their next deploy."
           )
         }
         urlSupportCache.set(url, false)

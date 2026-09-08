@@ -328,6 +328,89 @@ describe('vite-plugin-sri4', () => {
       )
     })
 
+    test('should skip a private response even when it claims to be immutable', async () => {
+      bundle['index.html'].source = '<script src="https://cdn.example.com/per-user.js"></script>'
+
+      fetch.mockImplementationOnce(() => Promise.resolve({
+        ok: true,
+        headers: new Headers({
+          'access-control-allow-origin': '*',
+          // Freshness and shareability are orthogonal: a per-client response
+          // can carry a long max-age, and hashing one pins the build
+          // machine's copy of bytes the browser will never receive.
+          'cache-control': 'private, max-age=31536000, immutable'
+        })
+      }))
+
+      await generateBundleFn({}, bundle)
+
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+    })
+
+    test('should skip when no-cache contradicts a year-long max-age', async () => {
+      bundle['index.html'].source = '<script src="https://cdn.example.com/revalidated.js"></script>'
+
+      fetch.mockImplementationOnce(() => Promise.resolve({
+        ok: true,
+        headers: new Headers({
+          'access-control-allow-origin': '*',
+          // "Cache it, but revalidate every time" - the origin saying the
+          // bytes may have changed
+          'cache-control': 'no-cache, max-age=31536000'
+        })
+      }))
+
+      await generateBundleFn({}, bundle)
+
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+    })
+
+    test('should accept a quoted max-age value', async () => {
+      bundle['index.html'].source = '<script src="https://cdn.example.com/lib@1.0.0.js"></script>'
+
+      fetch
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          headers: new Headers({
+            'access-control-allow-origin': '*',
+            // RFC 9111 permits a quoted-string directive value
+            'cache-control': 'public, max-age="31536000"'
+          })
+        }))
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
+        }))
+
+      await generateBundleFn({}, bundle)
+
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('should apply bypassDomains to a protocol-relative URL', async () => {
+      const bypassPlugin = sri({ bypassDomains: ['cdn.example.com'] })
+      const bypassConfig = {
+        base: '/',
+        plugins: [{ name: 'vite:build-import-analysis', generateBundle: vi.fn() }]
+      }
+      const localBundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="//cdn.example.com/lib.js"></script>'
+        }
+      }
+
+      fetch.mockReset()
+
+      bypassPlugin.configResolved(bypassConfig)
+      await bypassPlugin.generateBundle({}, localBundle)
+
+      // `//host/path` is fetched as https, so it must be bypassed as https too
+      expect(localBundle['index.html'].source).not.toMatch(/integrity=/)
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
     test('should add integrity when Cache-Control says immutable', async () => {
       bundle['index.html'].source =
         '<link rel="stylesheet" href="https://cdn.example.com/bootstrap@5.3.3.css">'
