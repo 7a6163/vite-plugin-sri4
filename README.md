@@ -52,7 +52,7 @@ import sri from 'vite-plugin-sri4';
 export default defineConfig({
   plugins: [
     sri({
-      // Optional. 'sha256' | 'sha384' | 'sha512', or an array of them. Defaults to 'sha384'.
+      // Optional. 'sha256' | 'sha384' | 'sha512'. Defaults to 'sha384'.
       hashAlgorithm: 'sha384',
       // Optional. 'anonymous' | 'use-credentials'. Defaults to 'anonymous'.
       crossorigin: 'anonymous',
@@ -88,8 +88,8 @@ Output:
 
 ## Plugin Options
 
-* `hashAlgorithm` (string | string[]):
-  The hash algorithm used for computing SRI. One of `sha256`, `sha384` (default) or `sha512` — the only three the SRI spec defines. Anything else fails at startup rather than producing an attribute browsers silently reject. Pass an array to emit several at once (`integrity="sha384-... sha512-..."`); the browser uses the strongest it supports, which is what makes migrating algorithms possible without a flag day.
+* `hashAlgorithm` (string):
+  The hash algorithm used for computing SRI. One of `sha256`, `sha384` (default) or `sha512` — the only three the SRI spec defines. Anything else fails at startup rather than producing an attribute browsers silently reject.
 * `crossorigin` (string):
   Value for the injected `crossorigin` attribute: `anonymous` (default) or `use-credentials`. Use the latter for a CDN that requires cookies or HTTP auth. Tags that already declare a `crossorigin` are left alone.
 * `bypassDomains` (Array<string>):

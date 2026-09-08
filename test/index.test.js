@@ -1214,11 +1214,9 @@ describe('vite-plugin-sri4', () => {
       // every browser refuses, blocking the resource with no build error.
       expect(() => sri({ hashAlgorithm: 'md5' })).toThrow(/unsupported hashAlgorithm "md5"/)
       expect(() => sri({ hashAlgorithm: 'sha1' })).toThrow(/unsupported hashAlgorithm/)
-      expect(() => sri({ hashAlgorithm: ['sha384', 'nope'] })).toThrow(/unsupported hashAlgorithm/)
-      expect(() => sri({ hashAlgorithm: [] })).toThrow(/at least one algorithm/)
 
       expect(() => sri({ hashAlgorithm: 'sha256' })).not.toThrow()
-      expect(() => sri({ hashAlgorithm: ['sha384', 'sha512'] })).not.toThrow()
+      expect(() => sri({ hashAlgorithm: 'sha512' })).not.toThrow()
     })
 
     test('should reject an invalid crossorigin value', () => {

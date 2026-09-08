@@ -5,12 +5,10 @@ export type SriHashAlgorithm = 'sha256' | 'sha384' | 'sha512'
 
 export interface SriOptions {
   /**
-   * Hash algorithm used to compute the integrity value. Pass several to emit a
-   * space-separated list, from which the browser picks the strongest it
-   * supports.
+   * Hash algorithm used to compute the integrity value.
    * @default 'sha384'
    */
-  hashAlgorithm?: SriHashAlgorithm | SriHashAlgorithm[]
+  hashAlgorithm?: SriHashAlgorithm
 
   /**
    * Value for the injected `crossorigin` attribute. Tags that already declare
