@@ -1209,48 +1209,21 @@ describe('vite-plugin-sri4', () => {
       expect(bundle['index.html'].source).toMatch(/integrity="sha512-/)
     })
 
-    test('should handle invalid hash algorithm gracefully', async () => {
-      // Use a non-existent hash algorithm - should fallback or handle gracefully
-      const plugin = sri({
-        hashAlgorithm: 'invalid-hash'
-      })
-      const config = {
-        base: '/',
-        plugins: [{
-          name: 'vite:build-import-analysis',
-          generateBundle: vi.fn()
-        }]
-      }
-      const bundle = {
-        'index.html': {
-          type: 'asset',
-          fileName: 'index.html',
-          source: '<script src="main.js"></script>'
-        },
-        'main.js': {
-          type: 'chunk',
-          fileName: 'main.js',
-          code: 'console.log("test")'
-        }
-      }
+    test('should reject an algorithm browsers will not accept', () => {
+      // Building successfully with md5 would produce integrity="md5-..." that
+      // every browser refuses, blocking the resource with no build error.
+      expect(() => sri({ hashAlgorithm: 'md5' })).toThrow(/unsupported hashAlgorithm "md5"/)
+      expect(() => sri({ hashAlgorithm: 'sha1' })).toThrow(/unsupported hashAlgorithm/)
+      expect(() => sri({ hashAlgorithm: ['sha384', 'nope'] })).toThrow(/unsupported hashAlgorithm/)
+      expect(() => sri({ hashAlgorithm: [] })).toThrow(/at least one algorithm/)
 
-      // Force the createHash function to throw an error for an invalid algorithm
-      let createHashCalled = false
-      createHash.mockImplementationOnce(() => {
-        createHashCalled = true
-        throw new Error('Digest method not supported')
-      }).mockImplementation(() => ({
-        update: vi.fn().mockReturnThis(),
-        digest: vi.fn().mockReturnValue('mockedHash')
-      }))
+      expect(() => sri({ hashAlgorithm: 'sha256' })).not.toThrow()
+      expect(() => sri({ hashAlgorithm: ['sha384', 'sha512'] })).not.toThrow()
+    })
 
-      plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
-
-      // An algorithm Node cannot use must fail the build, not ship without SRI
-      await expect(generateBundle({}, bundle)).rejects.toThrow(/Digest method not supported/)
-
-      expect(createHashCalled).toBe(true)
+    test('should reject an invalid crossorigin value', () => {
+      expect(() => sri({ crossorigin: 'yes-please' })).toThrow(/crossorigin must be one of/)
+      expect(() => sri({ crossorigin: 'use-credentials' })).not.toThrow()
     })
 
     test('should check handling of empty base path', async () => {

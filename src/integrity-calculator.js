@@ -10,13 +10,20 @@ export function bundleSource(item) {
   return item.type === 'chunk' ? item.code : item.source
 }
 
+// The only algorithms the SRI spec defines. Browsers reject anything else,
+// which blocks the resource with no build-time error at all.
+export const SUPPORTED_HASH_ALGORITHMS = ['sha256', 'sha384', 'sha512']
+
 /**
- * Compute an SRI string for a source that may be a string, Buffer or Uint8Array
+ * Compute an SRI string for a source that may be a string, Buffer or
+ * Uint8Array. Several algorithms produce a space-separated list, which the
+ * spec allows - browsers pick the strongest they support.
  */
-export function sriHash(source, hashAlgorithm) {
-  const hash = createHash(hashAlgorithm)
-  hash.update(typeof source === 'string' ? source : Buffer.from(source))
-  return `${hashAlgorithm}-${hash.digest('base64')}`
+export function sriHash(source, hashAlgorithms) {
+  const data = typeof source === 'string' ? source : Buffer.from(source)
+  return hashAlgorithms
+    .map(algorithm => `${algorithm}-${createHash(algorithm).update(data).digest('base64')}`)
+    .join(' ')
 }
 
 // Anything carrying a scheme (data:, blob:, invalid:) is not a path into the
@@ -141,7 +148,7 @@ export async function calculateIntegrity(
   const {
     ignoreMissingAsset,
     bypassDomains,
-    hashAlgorithm,
+    hashAlgorithms,
     hashedAssets
   } = options
 
@@ -214,7 +221,7 @@ export async function calculateIntegrity(
   // Ensure source is a Uint8Array or string
   if (!source) return null
 
-  const integrity = sriHash(source, hashAlgorithm)
+  const integrity = sriHash(source, hashAlgorithms)
   // Recorded so writeBundle can catch a later plugin rewriting these bytes
   if (bundleFileName && hashedAssets) hashedAssets.set(bundleFileName, integrity)
   return integrity

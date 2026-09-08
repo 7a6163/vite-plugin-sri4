@@ -1,6 +1,6 @@
 import { CacheManager } from './cache.js'
 import { createTransformer, injectImportmapIntegrity } from './html-parser.js'
-import { bundleSource, sriHash } from './integrity-calculator.js'
+import { SUPPORTED_HASH_ALGORITHMS, bundleSource, sriHash } from './integrity-calculator.js'
 import { Logger } from './logger.js'
 
 // Vite 6/7 uses `vite:build-import-analysis`; Vite 8 Rolldown native path
@@ -20,6 +20,7 @@ const VITE_INTERNAL_ANALYSIS_PLUGINS = [
   'native:import-analysis-build'
 ]
 const DEFAULT_HASH_ALGORITHM = 'sha384'
+const CROSSORIGIN_VALUES = ['anonymous', 'use-credentials']
 const DEFAULT_PLUGIN_NAME = 'vite-plugin-sri4'
 const MANIFEST_FILE_NAME = 'sri-manifest.json'
 const HTML_RE = /\.html?$/
@@ -37,14 +38,40 @@ function withTrailingSlash(base) {
 /**
  * Hash every non-HTML output, keyed by bundle file name.
  */
-function hashBundle(bundle, hashAlgorithm) {
+function hashBundle(bundle, hashAlgorithms) {
   const hashes = {}
   for (const [fileName, item] of Object.entries(bundle)) {
     if (HTML_RE.test(fileName)) continue
     const source = bundleSource(item)
-    if (source) hashes[fileName] = sriHash(source, hashAlgorithm)
+    if (source) hashes[fileName] = sriHash(source, hashAlgorithms)
   }
   return hashes
+}
+
+/**
+ * Reject configuration that would build cleanly and then fail in the browser.
+ */
+function validateOptions(hashAlgorithms, crossorigin) {
+  if (hashAlgorithms.length === 0) {
+    throw new Error(`[${DEFAULT_PLUGIN_NAME}] hashAlgorithm must name at least one algorithm`)
+  }
+
+  for (const algorithm of hashAlgorithms) {
+    if (!SUPPORTED_HASH_ALGORITHMS.includes(algorithm)) {
+      throw new Error(
+        `[${DEFAULT_PLUGIN_NAME}] unsupported hashAlgorithm "${algorithm}". ` +
+        `The SRI spec defines ${SUPPORTED_HASH_ALGORITHMS.join(', ')}; browsers reject ` +
+        `anything else, so the build would succeed and the resource would be blocked.`
+      )
+    }
+  }
+
+  if (!CROSSORIGIN_VALUES.includes(crossorigin)) {
+    throw new Error(
+      `[${DEFAULT_PLUGIN_NAME}] crossorigin must be one of ${CROSSORIGIN_VALUES.join(', ')}, ` +
+      `got "${crossorigin}"`
+    )
+  }
 }
 
 function sri(options = {}) {
@@ -52,10 +79,16 @@ function sri(options = {}) {
     ignoreMissingAsset = false,
     bypassDomains = [],
     hashAlgorithm = DEFAULT_HASH_ALGORITHM,
+    crossorigin = 'anonymous',
     logLevel = 'warn',
     manifest = false,
     importmap = false
   } = options
+
+  // One or several: several emit a space-separated list and the browser picks
+  // the strongest it supports.
+  const hashAlgorithms = Array.isArray(hashAlgorithm) ? hashAlgorithm : [hashAlgorithm]
+  validateOptions(hashAlgorithms, crossorigin)
 
   // Create cache manager and logger instances for this plugin instance
   const cacheManager = new CacheManager()
@@ -79,7 +112,7 @@ function sri(options = {}) {
         const item = bundle[fileName]
         if (!item) continue
         const source = bundleSource(item)
-        if (source && sriHash(source, hashAlgorithm) !== integrity) {
+        if (source && sriHash(source, hashAlgorithms) !== integrity) {
           drifted.push(fileName)
         }
       }
@@ -106,7 +139,8 @@ function sri(options = {}) {
       const transformer = createTransformer({
         ignoreMissingAsset,
         bypassDomains,
-        hashAlgorithm,
+        hashAlgorithms,
+        crossorigin,
         hashedAssets
       }, config, cacheManager, logger)
 
@@ -122,7 +156,7 @@ function sri(options = {}) {
         handled.add(bundle)
 
         // Computed before emitting anything so the manifest never hashes itself
-        const hashes = manifest || importmap ? hashBundle(bundle, hashAlgorithm) : null
+        const hashes = manifest || importmap ? hashBundle(bundle, hashAlgorithms) : null
 
         const htmlFiles = Object.entries(bundle).filter(
           ([, chunk]) =>
