@@ -72,14 +72,14 @@ function getBundleKey(htmlPath, url, config) {
  * `assets/vendor-main.js` - a cross-filename match would inject a valid-looking
  * but wrong hash, which the browser rejects with no build-time error.
  */
-export function findBundleKey(bundle, bundleKey, logger = null) {
+export function findBundleKey(bundle, bundleKey, logger) {
   const candidates = Object.keys(bundle).filter(key =>
     key === bundleKey ||
     key.endsWith(`/${bundleKey}`) ||
     bundleKey.endsWith(`/${key}`)
   )
 
-  if (candidates.length > 1 && logger) {
+  if (candidates.length > 1) {
     logger.warn(
       `Ambiguous bundle key for "${bundleKey}": ${candidates.join(', ')} - using ${candidates[0]}`
     )
@@ -113,17 +113,13 @@ async function readPublicAsset(config, bundleKey, logger) {
   // A URL must never reach outside publicDir, however it is spelled
   const relative = path.relative(publicDir, filePath)
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    if (logger) {
-      logger.warn(`Refusing to read outside publicDir: ${bundleKey}`)
-    }
+    logger.warn(`Refusing to read outside publicDir: ${bundleKey}`)
     return null
   }
 
   try {
     const source = await readFile(filePath)
-    if (logger) {
-      logger.debug(`Resolved from publicDir: ${bundleKey}`)
-    }
+    logger.debug(`Resolved from publicDir: ${bundleKey}`)
     return source
   } catch {
     return null
@@ -140,7 +136,7 @@ export async function calculateIntegrity(
   options,
   config,
   cacheManager,
-  logger = null
+  logger
 ) {
   const {
     ignoreMissingAsset,
@@ -177,9 +173,7 @@ export async function calculateIntegrity(
     if (!source) return null
   } else if (!ownAsset && SCHEME_RE.test(url)) {
     // data:/blob: and unknown schemes cannot be resolved to a bundle asset
-    if (logger) {
-      logger.debug(`Skipping URL that is not a bundle asset: ${url}`)
-    }
+    logger.debug(`Skipping URL that is not a bundle asset: ${url}`)
     return null
   } else {
     const bundleKey = getBundleKey(htmlPath, url, config)
@@ -192,9 +186,7 @@ export async function calculateIntegrity(
       const possibleMatch = findBundleKey(bundle, bundleKey, logger)
 
       if (possibleMatch) {
-        if (logger) {
-          logger.debug(`Bundle key fallback: ${bundleKey} -> ${possibleMatch}`)
-        }
+        logger.debug(`Bundle key fallback: ${bundleKey} -> ${possibleMatch}`)
         bundleFileName = possibleMatch
         source = bundleSource(bundle[possibleMatch])
       } else {
@@ -203,11 +195,9 @@ export async function calculateIntegrity(
 
         if (!source) {
           if (ignoreMissingAsset) {
-            if (logger) {
-              logger.warn(
-                `Asset not found in bundle or publicDir: ${url} (path: ${htmlPath}, key: ${bundleKey})`
-              )
-            }
+            logger.warn(
+              `Asset not found in bundle or publicDir: ${url} (path: ${htmlPath}, key: ${bundleKey})`
+            )
             return null
           }
           throw new Error(

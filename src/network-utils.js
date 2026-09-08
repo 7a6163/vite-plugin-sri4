@@ -6,7 +6,7 @@ const DEFAULT_TIMEOUT = 5000
  * Does an external URL's host match one of `domains`, or a subdomain of one?
  * Used by both `bypassDomains` and `trustDomains`.
  */
-export function matchesDomain(url, domains = [], logger = null) {
+export function matchesDomain(url, domains = [], logger) {
   if (!url || typeof url !== 'string' || !url.startsWith('http')) return false
   if (domains.length === 0) return false
 
@@ -16,9 +16,7 @@ export function matchesDomain(url, domains = [], logger = null) {
       urlObj.hostname === domain || urlObj.hostname.endsWith(`.${domain}`)
     )
   } catch (error) {
-    if (logger) {
-      logger.warn(`Invalid URL: ${url}`, error)
-    }
+    logger.warn(`Invalid URL: ${url}`, error)
     return false
   }
 }
@@ -112,13 +110,13 @@ function isImmutableResponse(cacheControl) {
  * That is the right side to lose on: the accepted case, which is every build
  * that actually ships hashes, goes from two requests to one.
  */
-export async function fetchVerifiedResource(url, resourceCache, logger = null, trusted = false, retries = 1) {
+export async function fetchVerifiedResource(url, resourceCache, logger, trusted = false, retries = 1) {
   if (resourceCache.has(url)) {
     return resourceCache.get(url)
   }
 
   const reject = (message) => {
-    if (logger && message) logger.warn(message)
+    logger.warn(message)
     resourceCache.set(url, null)
     return null
   }
@@ -194,9 +192,7 @@ export async function fetchVerifiedResource(url, resourceCache, logger = null, t
     }
   }
 
-  if (logger) {
-    logger.warn(`Skipping SRI for ${url}: the request failed.`, lastError)
-  }
+  logger.warn(`Skipping SRI for ${url}: the request failed.`, lastError)
   resourceCache.set(url, null)
   return null
 }
