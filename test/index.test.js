@@ -8,6 +8,8 @@ vi.stubGlobal('fetch', fetch)
 
 vi.mock('crypto')
 
+const analysis = name => ({ name, generateBundle: vi.fn() })
+
 describe('vite-plugin-sri4', () => {
   // Save original console methods to restore later
   const originalConsoleWarn = console.warn
@@ -151,7 +153,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      generateBundleFn = config.plugins[0].generateBundle
+      generateBundleFn = plugin.generateBundle
     })
 
     test('should transform local scripts', async () => {
@@ -509,7 +511,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       // If your code doesn't handle malformed HTML (which is common), we'll test that instead
       await generateBundle({}, bundle)
@@ -577,7 +579,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
       // Original content should be unchanged or at least not have integrity added
@@ -602,7 +604,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
       // Should have called console.warn
@@ -627,7 +629,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await expect(generateBundle({}, bundle)).rejects.toThrow(/not found in bundle/)
       // The build fails rather than silently shipping a tag without integrity
@@ -656,7 +658,7 @@ describe('vite-plugin-sri4', () => {
       fetch.mockImplementation(() => Promise.reject(new Error('Network error')))
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -691,7 +693,7 @@ describe('vite-plugin-sri4', () => {
       }))
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -723,7 +725,7 @@ describe('vite-plugin-sri4', () => {
       })
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -755,7 +757,7 @@ describe('vite-plugin-sri4', () => {
       })
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -781,7 +783,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       // Should not throw errors with empty content
       await generateBundle({}, bundle)
@@ -823,7 +825,7 @@ describe('vite-plugin-sri4', () => {
       }))
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -850,7 +852,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -870,7 +872,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       // Test bundle with external URL
       const bundle = {
@@ -937,7 +939,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -981,7 +983,7 @@ describe('vite-plugin-sri4', () => {
       }))
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1030,7 +1032,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       // Mock the createHash function and track calls
       const updateSpy = vi.fn().mockReturnThis()
@@ -1092,7 +1094,7 @@ describe('vite-plugin-sri4', () => {
       fetch.mockReset() // Clear any mock implementations
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1122,7 +1124,7 @@ describe('vite-plugin-sri4', () => {
       fetch.mockReset() // Clear any mock implementations
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1164,7 +1166,7 @@ describe('vite-plugin-sri4', () => {
       }))
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1201,7 +1203,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1209,48 +1211,19 @@ describe('vite-plugin-sri4', () => {
       expect(bundle['index.html'].source).toMatch(/integrity="sha512-/)
     })
 
-    test('should handle invalid hash algorithm gracefully', async () => {
-      // Use a non-existent hash algorithm - should fallback or handle gracefully
-      const plugin = sri({
-        hashAlgorithm: 'invalid-hash'
-      })
-      const config = {
-        base: '/',
-        plugins: [{
-          name: 'vite:build-import-analysis',
-          generateBundle: vi.fn()
-        }]
-      }
-      const bundle = {
-        'index.html': {
-          type: 'asset',
-          fileName: 'index.html',
-          source: '<script src="main.js"></script>'
-        },
-        'main.js': {
-          type: 'chunk',
-          fileName: 'main.js',
-          code: 'console.log("test")'
-        }
-      }
+    test('should reject an algorithm browsers will not accept', () => {
+      // Building successfully with md5 would produce integrity="md5-..." that
+      // every browser refuses, blocking the resource with no build error.
+      expect(() => sri({ hashAlgorithm: 'md5' })).toThrow(/unsupported hashAlgorithm "md5"/)
+      expect(() => sri({ hashAlgorithm: 'sha1' })).toThrow(/unsupported hashAlgorithm/)
 
-      // Force the createHash function to throw an error for an invalid algorithm
-      let createHashCalled = false
-      createHash.mockImplementationOnce(() => {
-        createHashCalled = true
-        throw new Error('Digest method not supported')
-      }).mockImplementation(() => ({
-        update: vi.fn().mockReturnThis(),
-        digest: vi.fn().mockReturnValue('mockedHash')
-      }))
+      expect(() => sri({ hashAlgorithm: 'sha256' })).not.toThrow()
+      expect(() => sri({ hashAlgorithm: 'sha512' })).not.toThrow()
+    })
 
-      plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
-
-      // An algorithm Node cannot use must fail the build, not ship without SRI
-      await expect(generateBundle({}, bundle)).rejects.toThrow(/Digest method not supported/)
-
-      expect(createHashCalled).toBe(true)
+    test('should reject an invalid crossorigin value', () => {
+      expect(() => sri({ crossorigin: 'yes-please' })).toThrow(/crossorigin must be one of/)
+      expect(() => sri({ crossorigin: 'use-credentials' })).not.toThrow()
     })
 
     test('should check handling of empty base path', async () => {
@@ -1276,7 +1249,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1315,7 +1288,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1376,7 +1349,7 @@ describe('vite-plugin-sri4', () => {
         }
       }
 
-      await config.plugins[0].generateBundle({}, bundle)
+      await plugin.generateBundle({}, bundle)
 
       // Debug messages might or might not be logged depending on implementation
       // Just check it ran without errors
@@ -1403,7 +1376,7 @@ describe('vite-plugin-sri4', () => {
         }
       }
 
-      await config.plugins[0].generateBundle({}, bundle)
+      await plugin.generateBundle({}, bundle)
 
       // Warning messages should be logged at warn level
       expect(console.warn).toHaveBeenCalled()
@@ -1435,7 +1408,7 @@ describe('vite-plugin-sri4', () => {
         }
       }
 
-      await config.plugins[0].generateBundle({}, bundle)
+      await plugin.generateBundle({}, bundle)
 
       // `silent` must suppress every channel. It used to resolve to `warn`
       // because its level is 0 and the lookup used `||`.
@@ -1486,7 +1459,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1527,7 +1500,7 @@ describe('vite-plugin-sri4', () => {
         }))
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1566,7 +1539,7 @@ describe('vite-plugin-sri4', () => {
         }))
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1598,7 +1571,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1629,7 +1602,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
+      const generateBundle = plugin.generateBundle
 
       await generateBundle({}, bundle)
 
@@ -1638,102 +1611,107 @@ describe('vite-plugin-sri4', () => {
     })
   })
 
+  // Vite places its import-analysis plugin immediately after `enforce: post`
+  // user plugins, and that plugin substitutes __VITE_PRELOAD__ in entry chunks
+  // inside its own generateBundle. Running before it means hashing bytes that
+  // never ship, so the plugin moves itself one place later.
   describe('Vite 8 / Rolldown compatibility', () => {
-    test('should patch native:import-analysis-build when only that plugin is present', async () => {
+    test('should move itself after native:import-analysis-build', () => {
+      const plugin = sri()
+      const config = { base: '/', plugins: [plugin, analysis('native:import-analysis-build')] }
+      plugin.configResolved(config)
+
+      expect(config.plugins.map(p => p.name)).toEqual([
+        'native:import-analysis-build',
+        'vite-plugin-sri4'
+      ])
+    })
+
+    test('should move itself after the legacy plugin', () => {
+      const plugin = sri()
+      const config = { base: '/', plugins: [plugin, analysis('vite:build-import-analysis')] }
+      plugin.configResolved(config)
+
+      expect(config.plugins.map(p => p.name)).toEqual([
+        'vite:build-import-analysis',
+        'vite-plugin-sri4'
+      ])
+    })
+
+    test('should end up after the last one when both are present', () => {
       const plugin = sri()
       const config = {
         base: '/',
-        plugins: [{
-          name: 'native:import-analysis-build',
-          generateBundle: vi.fn()
-        }]
+        plugins: [
+          plugin,
+          analysis('vite:build-import-analysis'),
+          analysis('native:import-analysis-build')
+        ]
       }
-      const bundle = {
-        'index.html': {
-          type: 'asset',
-          fileName: 'index.html',
-          source: '<script src="main.js"></script>'
-        },
-        'main.js': {
-          type: 'chunk',
-          fileName: 'main.js',
-          code: 'console.log("test")'
-        }
-      }
-
-      plugin.configResolved(config)
-      const generateBundle = config.plugins[0].generateBundle
-
-      await generateBundle({}, bundle)
-
-      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
-      expect(bundle['index.html'].source).toMatch(/crossorigin="anonymous"/)
-    })
-
-    test('should patch both legacy and native plugins when both are present', async () => {
-      const plugin = sri()
-      const legacy = { name: 'vite:build-import-analysis', generateBundle: vi.fn() }
-      const native = { name: 'native:import-analysis-build', generateBundle: vi.fn() }
-      const config = { base: '/', plugins: [legacy, native] }
-
       plugin.configResolved(config)
 
-      // Both plugin handlers should now be wrapped (not the original vi.fn)
-      // We verify by checking they still match the function type contract
-      expect(typeof legacy.generateBundle).toBe('function')
-      expect(typeof native.generateBundle).toBe('function')
-
-      const bundle = {
-        'index.html': {
-          type: 'asset',
-          fileName: 'index.html',
-          source: '<script src="main.js"></script>'
-        },
-        'main.js': {
-          type: 'chunk',
-          fileName: 'main.js',
-          code: 'console.log("test")'
-        }
-      }
-
-      // Running either wrapped handler should trigger SRI injection. Use the legacy
-      // one; the native handler is also wrapped but Vite would only call one path
-      // per build in practice.
-      await legacy.generateBundle({}, bundle)
-      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+      // Following only the first would still leave us hashing too early
+      expect(config.plugins.map(p => p.name)).toEqual([
+        'vite:build-import-analysis',
+        'native:import-analysis-build',
+        'vite-plugin-sri4'
+      ])
     })
 
-    test('should patch handler-object form (Rollup hook with order/sequential)', async () => {
+    test('should leave order alone when it already runs late enough', () => {
       const plugin = sri()
-      const innerHandler = vi.fn()
+      const config = { base: '/', plugins: [analysis('vite:build-import-analysis'), plugin] }
+      plugin.configResolved(config)
+
+      expect(config.plugins.map(p => p.name)).toEqual([
+        'vite:build-import-analysis',
+        'vite-plugin-sri4'
+      ])
+    })
+
+    test('should not touch unrelated plugins around it', () => {
+      const plugin = sri()
       const config = {
         base: '/',
-        plugins: [{
-          name: 'vite:build-import-analysis',
-          generateBundle: { order: 'pre', sequential: true, handler: innerHandler }
-        }]
+        plugins: [
+          { name: 'other-pre' },
+          plugin,
+          analysis('vite:build-import-analysis'),
+          { name: 'other-post' }
+        ]
       }
-
       plugin.configResolved(config)
-      const wrapped = config.plugins[0].generateBundle.handler
 
+      expect(config.plugins.map(p => p.name)).toEqual([
+        'other-pre', 'vite:build-import-analysis', 'vite-plugin-sri4', 'other-post'
+      ])
+    })
+
+    test('should still run its hook once per bundle', async () => {
+      const plugin = sri({ manifest: true })
+      const config = {
+        base: '/',
+        plugins: [
+          plugin,
+          analysis('vite:build-import-analysis'),
+          analysis('native:import-analysis-build')
+        ]
+      }
+      plugin.configResolved(config)
+
+      const emitted = []
       const bundle = {
         'index.html': {
           type: 'asset',
           fileName: 'index.html',
           source: '<script src="main.js"></script>'
         },
-        'main.js': {
-          type: 'chunk',
-          fileName: 'main.js',
-          code: 'console.log("test")'
-        }
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'console.log(1)' }
       }
+      await plugin.generateBundle.call({ emitFile: f => emitted.push(f) }, {}, bundle)
 
-      await wrapped({}, bundle)
-
-      expect(innerHandler).toHaveBeenCalled()
-      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+      // One hook on our own object, so no double-emit guard is needed
+      expect(emitted.map(f => f.fileName)).toEqual(['sri-manifest.json'])
     })
   })
 
@@ -1763,7 +1741,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      await config.plugins[0].generateBundle({}, bundle)
+      await plugin.generateBundle({}, bundle)
 
       expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
     })
@@ -1793,7 +1771,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       plugin.configResolved(config)
-      await config.plugins[0].generateBundle({}, bundle)
+      await plugin.generateBundle({}, bundle)
 
       expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
     })

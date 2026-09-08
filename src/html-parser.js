@@ -125,7 +125,7 @@ async function processMatch(
 
   let content = ` integrity="${integrity}"`
   if (!CROSSORIGIN_ATTR_RE.test(tag)) {
-    content += ' crossorigin="anonymous"'
+    content += ` crossorigin="${options.crossorigin}"`
   }
 
   const at = match.index + insertOffset(tag, pattern.endOffset)

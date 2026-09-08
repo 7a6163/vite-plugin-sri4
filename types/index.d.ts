@@ -1,11 +1,21 @@
 import type { Plugin } from 'vite'
 
+/** The only algorithms the SRI spec defines; browsers reject anything else. */
+export type SriHashAlgorithm = 'sha256' | 'sha384' | 'sha512'
+
 export interface SriOptions {
   /**
    * Hash algorithm used to compute the integrity value.
    * @default 'sha384'
    */
-  hashAlgorithm?: 'sha256' | 'sha384' | 'sha512'
+  hashAlgorithm?: SriHashAlgorithm
+
+  /**
+   * Value for the injected `crossorigin` attribute. Tags that already declare
+   * one are left alone.
+   * @default 'anonymous'
+   */
+  crossorigin?: 'anonymous' | 'use-credentials'
 
   /**
    * Hostnames to leave untouched. Matches the host itself and its subdomains.

@@ -52,8 +52,10 @@ import sri from 'vite-plugin-sri4';
 export default defineConfig({
   plugins: [
     sri({
-      // Optional. The security hash algorithm. Defaults to "sha384".
+      // Optional. 'sha256' | 'sha384' | 'sha512'. Defaults to 'sha384'.
       hashAlgorithm: 'sha384',
+      // Optional. 'anonymous' | 'use-credentials'. Defaults to 'anonymous'.
+      crossorigin: 'anonymous',
       // Optional. Domains to bypass SRI injection.
       bypassDomains: ['example.com'],
       // Optional. Suppress warnings for missing assets.
@@ -87,7 +89,9 @@ Output:
 ## Plugin Options
 
 * `hashAlgorithm` (string):
-  The hash algorithm used for computing SRI. Default is `sha384`. You may change it to other supported algorithms like `sha256` or `sha512`.
+  The hash algorithm used for computing SRI. One of `sha256`, `sha384` (default) or `sha512` — the only three the SRI spec defines. Anything else fails at startup rather than producing an attribute browsers silently reject.
+* `crossorigin` (string):
+  Value for the injected `crossorigin` attribute: `anonymous` (default) or `use-credentials`. Use the latter for a CDN that requires cookies or HTTP auth. Tags that already declare a `crossorigin` are left alone.
 * `bypassDomains` (Array<string>):
   Array of domain names where SRI injection should be skipped. This allows external resources from specified domains to be excluded from SRI checks (for example, when they may not support CORS).
 * `ignoreMissingAsset` (boolean):
