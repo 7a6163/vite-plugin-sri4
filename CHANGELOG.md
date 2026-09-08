@@ -2,33 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [5.0.0] - 2026-09-08
+
+External resources are the whole of this release. Nothing here touches how your own build outputs are hashed.
 
 ### Breaking Changes
 
-- **External resources are hashed only when their origin declares the URL immutable.** An `integrity` attribute pins one snapshot of bytes forever, so it is only correct on a URL whose bytes never change — and the origin is the only party that knows. The plugin now requires it to say so: `Cache-Control: immutable`, or a `max-age` of a year or more. Everything else is left alone with a warning naming the URL and the reason.
+- **An external resource is hashed only when its origin declares the URL immutable.** Previously any resource that answered `Access-Control-Allow-Origin: *` got an `integrity` attribute. That establishes the resource is reachable and CORS-eligible, and treats it as proof the resource is *byte-stable* — that the bytes fetched at build time are the bytes a browser will receive. Those are different properties, and where they diverge the injected hash matches nothing, the browser blocks the resource, and the build still exits 0.
 
-  This replaces the `Cache-Control: private` gate and the default `bypassDomains` entry added below, both of which were blacklist-shaped. A blacklist is never finished: `cdn.tailwindcss.com` (`max-age=14400`) and `plausible.io/js/script.js` (`public, max-age=86400`) are ordinary `public` responses that roll just the same, and every gap ships a build that works today and breaks whenever that vendor deploys. The whitelist fails the other way — a resource that could have been protected ships unprotected, and says so in the log.
+  An `integrity` attribute pins one snapshot of bytes forever, so it is only correct on a URL whose bytes never change — and the origin is the only party that knows. It now has to say so: `Cache-Control: immutable`, or a `max-age` of a year or more. Everything else is left alone, with a warning naming the URL and the reason.
 
-  The threshold is not a balancing act. Version-pinned URLs answer `max-age=30672000` or more (cdnjs, jsdelivr, unpkg, code.jquery.com); rolling ones answer `604800` or less (jsdelivr `@3`, Google Fonts, plausible, Tailwind's CDN, Facebook's SDK, `js.stripe.com/v3/`, unpkg `@18`). Nothing lands in between.
+  The threshold separates two clusters the CDNs themselves created, rather than splitting a spectrum:
 
-  **What changes for you:** a version-pinned third-party library keeps its integrity. A floating or rolling URL loses it and starts warning. Your own build outputs are entirely unaffected — bundle entries, `public/` files and, with an absolute `base`, your own CDN URLs are all hashed locally without a request.
+  | URL | `Cache-Control` | |
+  |---|---|---|
+  | `cdnjs …/jquery/3.7.1/jquery.min.js` | `max-age=30672000, immutable` | hashed |
+  | `jsdelivr …/bootstrap@5.3.3/…` | `max-age=31536000, immutable` | hashed |
+  | `unpkg …/htmx.org@1.9.12/…` | `max-age=31536000` | hashed |
+  | `code.jquery.com/jquery-3.7.1.min.js` | `max-age=31536000` | hashed |
+  | `jsdelivr …/vue@3/…` | `max-age=604800` | skipped |
+  | `fonts.googleapis.com/css2?…` | `private, max-age=86400` | skipped |
+  | `plausible.io/js/script.js` | `public, max-age=86400` | skipped |
+  | `cdn.tailwindcss.com` | `max-age=14400` | skipped |
+  | `connect.facebook.net/en_US/sdk.js` | `public, max-age=1200` | skipped |
+  | `js.stripe.com/v3/` | `max-age=120` | skipped |
+  | `unpkg …/react@18/…` | `max-age=60` | skipped |
 
-- **`bypassDomains` no longer has a built-in default.** `fonts.googleapis.com` needed one only because the `private` gate did not catch it cheaply; the immutability check skips it on its own (`private, max-age=86400`). Your list is once again exactly what you pass.
+  Nothing lands between 604800 and 30672000.
+
+  A blacklist of known-bad origins was the obvious alternative and it is never finished: `cdn.tailwindcss.com` and `plausible.io/js/script.js` are ordinary `public` responses that roll just the same, and each gap ships a build that works today and breaks whenever that vendor deploys. The whitelist fails the other way — a resource that could have been protected ships unprotected, and announces itself in the build log.
+
+  `Vary` is deliberately not the signal: Google Fonts varies on `User-Agent` without declaring it there (`vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`), so a `Vary`-based check lets exactly that resource through.
+
+  **Migrating:** a version-pinned third-party library keeps its integrity and needs nothing. A floating or rolling URL loses it and starts warning — pin a version (`unpkg.com/react@18.3.1/…` answers `max-age=31536000`, `unpkg.com/react@18/…` answers `max-age=60`), or use `trustDomains` for a stable host that does not set the header, or `bypassDomains` to accept it and silence the warning.
 
 ### Features
 
-- **`trustDomains` option.** Hostnames whose bytes you vouch for, matched on the host and its subdomains, hashed regardless of what the origin declares. For a stable host that does not set the header — not for forcing SRI onto a vendor's rolling URL, which breaks on their next deploy.
+- **`trustDomains` option.** Hostnames whose bytes you vouch for, matched on the host and its subdomains, hashed regardless of what the origin declares. For a stable host that does not set the header — not for forcing SRI onto a vendor's rolling URL, which breaks on their next deploy. Stripe, for one, documents that `js.stripe.com/v3/` must not be pinned.
 
 ### Bug Fixes
 
+- **External `<link rel="stylesheet">` no longer ships a hash that can never match (regression in 4.1.0).** Google Fonts serves a different `@font-face` block per client and answers `Access-Control-Allow-Origin: *`, so it passed the 4.1/4.2 CORS gate and got an integrity the browser could never verify — a stylesheet blocked in production, from a build that exited 0 with no warning. The pre-4.1 stylesheet regex required `rel` before `href` and Google's own snippet is `<link href="…" rel="stylesheet">`, so these tags were never matched before; order-independent attribute matching in 4.1.0 started hashing them, and anyone on `^4.0.0` picked it up on their next install. The immutability check above skips it (`private, max-age=86400`), as it does `www.googletagmanager.com` (`private, max-age=900`).
+
 - **Every skipped external resource now says why.** A `HEAD` that failed, or a response with no `Access-Control-Allow-Origin` at all, used to skip in silence — only a *concrete* non-`*` origin warned. `cdn.tailwindcss.com` (a 302 with no CORS header) shipped with no integrity and nothing in the log.
 
-- **External resources are gated on byte-stability, not just CORS reachability.** `checkResourceSupport()` returned true on `response.ok && Access-Control-Allow-Origin: *` and treated that as proof the bytes fetched at build time are the bytes a browser receives. They are different properties. Where they diverge the injected hash matches nothing, the browser blocks the resource, and the build still exits 0. A response is now also skipped when it carries `Cache-Control: private` - the origin declaring it unsafe to share between clients, and a response that cannot be shared between clients cannot have a hash pinned to it either. The skip warns, naming the URL, the header and `bypassDomains`, in the same shape as the existing non-`*` CORS warning. `Vary` is deliberately not the signal: Google Fonts varies on `User-Agent` without declaring it (`vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`), so a `Vary`-based gate lets exactly this resource through.
+### Internal
 
-  Google Fonts is the case in the wild, and it regressed in 4.1.0: the pre-4.1 stylesheet regex required `rel` before `href`, and Google's own snippet is `<link href="..." rel="stylesheet">`, so external stylesheets went untouched. Order-independent attribute matching started hashing them. `www.googletagmanager.com` answers `private, max-age=900` with `Access-Control-Allow-Origin: *` and is caught by the same gate.
-
-- **`fonts.googleapis.com` is bypassed by default**, so the common case needs no configuration and costs no build-time request. The default list is *merged with* the user's `bypassDomains` rather than used as its default value - as a destructuring default, anyone passing the option would have silently replaced it and got the broken build back.
+- `isUrlFromBypassDomain` → `matchesDomain`, now that `bypassDomains` and `trustDomains` both use it. Not exported from the package entry.
 
 ## [4.2.0] - 2026-09-08
 
