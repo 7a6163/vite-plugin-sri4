@@ -14,7 +14,9 @@ export class Logger {
       info: 3,
       debug: 4
     }
-    this.currentLevel = this.levels[logLevel] || this.levels.warn
+    // `??`, not `||` - levels.silent is 0, which `||` treats as absent and
+    // silently downgrades to 'warn', the one level that must suppress output.
+    this.currentLevel = this.levels[logLevel] ?? this.levels.warn
   }
 
   /**
