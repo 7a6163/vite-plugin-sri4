@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- **Added the missing `LICENSE` file and settled the licence to MIT.** `package.json` declared `ISC` (the `npm init` default) while the README had always claimed MIT and pointed at a `LICENSE` file that did not exist, so the package shipped no licence text at all and automated scanners disagreed with human readers. MIT was chosen because it is what the README has told users for the life of the project. All 85 commits are by a single author, so no contributor agreement was needed.
+
 ### Features
 
 - **`publicDir` assets are hashed.** Files copied verbatim from `public/` never become bundle entries, so a normal `<script src="/sw.js">` failed the build under the default `ignoreMissingAsset: false`. They are now read from disk, with the resolved path checked to stay inside `publicDir` so a URL can never reach outside the project.
