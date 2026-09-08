@@ -1197,7 +1197,7 @@ describe('vite-plugin-sri4', () => {
       }
 
       fetch.mockReset()
-      fetch.mockImplementation(url => Promise.resolve({
+      fetch.mockImplementation(() => Promise.resolve({
         ok: true,
         headers: new Headers({
           'access-control-allow-origin': '*',
