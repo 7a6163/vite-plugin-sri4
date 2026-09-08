@@ -145,9 +145,11 @@ The `writeBundle` drift check above covers **your own build outputs only**. Ever
 
 An external URL pointing at someone else's origin is different. It is fetched **once, at build time, from your build machine**, and the hash is taken from that copy. An `integrity` attribute pins those bytes forever, so it is only correct on a URL whose bytes never change — and the origin is the only party that knows whether that is true.
 
-So the plugin asks it. An external resource is hashed only when **all three** hold:
+So the plugin asks it. One `GET` does the whole job — it carries both the bytes to hash and the headers the answer depends on. There is no separate `HEAD` probe, so a host that serves `GET` and refuses `HEAD` is not a problem; `js.tappaysdk.com` answers `403` to `HEAD` and `200` to `GET`, and is read correctly.
 
-1. **`HEAD` succeeds.** Otherwise there is nothing to check.
+An external resource is hashed only when **all three** hold:
+
+1. **The request succeeds.** A non-2xx response leaves nothing to check.
 2. **`Access-Control-Allow-Origin: *`.** Injecting `integrity` also injects `crossorigin`, so a response scoped to one specific origin — or to none — would turn a working resource into a blocked one.
 3. **The origin declares the URL immutable**: `Cache-Control: immutable`, or a `max-age` of a year or more — and nothing in the same header contradicting it. `private`, `no-store` and `no-cache` each veto it: freshness and shareability are orthogonal, so a per-client response can carry a long `max-age`, and `no-cache, max-age=<long>` is a real CDN spelling of "cache it, but revalidate every time". Or the host is in `trustDomains`.
 
