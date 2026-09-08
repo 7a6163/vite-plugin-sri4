@@ -140,7 +140,7 @@ const run = async (options, bundle, config = {}) => {
   const plugin = sri({ logLevel: 'silent', ...options })
   const resolved = { base: '/', plugins: [analysisPlugin()], ...config }
   plugin.configResolved(resolved)
-  await resolved.plugins[0].generateBundle.call({ emitFile() {} }, {}, bundle)
+  await plugin.generateBundle.call({ emitFile() {} }, {}, bundle)
   return bundle
 }
 
@@ -241,7 +241,7 @@ describe('regressions', () => {
     const config = { base: '/', plugins: [analysisPlugin()] }
     plugin.configResolved(config)
 
-    await config.plugins[0].generateBundle.call(
+    await plugin.generateBundle.call(
       { emitFile: file => emitted.push(file) },
       {},
       { 'entry-server.js': chunk('entry-server.js', 'export default 1') }
@@ -259,7 +259,7 @@ describe('regressions', () => {
       'index.html': html('<script src="/main.js"></script>'),
       'main.js': chunk('main.js', 'console.log(1)')
     }
-    await config.plugins[0].generateBundle.call({ emitFile() {} }, {}, bundle)
+    await plugin.generateBundle.call({ emitFile() {} }, {}, bundle)
     expect(bundle['index.html'].source).toContain(sha384('console.log(1)'))
 
     // A plugin ordered after this one rewrites the chunk. Without this check
@@ -277,7 +277,7 @@ describe('regressions', () => {
       'index.html': html('<script src="/main.js"></script>'),
       'main.js': chunk('main.js', 'console.log(1)')
     }
-    await config.plugins[0].generateBundle.call({ emitFile() {} }, {}, bundle)
+    await plugin.generateBundle.call({ emitFile() {} }, {}, bundle)
 
     expect(() => plugin.writeBundle({}, bundle)).not.toThrow()
   })
@@ -313,8 +313,7 @@ describe('regressions', () => {
       'index.html': html('<script type="module" src="/main.js"></script>'),
       'main.js': chunk('main.js', 'console.log(1)')
     }
-    const ctx = { emitFile: f => emitted.push(f) }
-    for (const p of config.plugins) await p.generateBundle.call(ctx, {}, bundle)
+    await plugin.generateBundle.call({ emitFile: f => emitted.push(f) }, {}, bundle)
 
     // A duplicate fileName makes Rollup throw, and the second import map pass
     // warns about the map it just injected.
@@ -331,7 +330,7 @@ describe('regressions', () => {
       'index.html': html('<script src="/main.js" integrity="sha384-theirs"></script>'),
       'main.js': chunk('main.js', 'console.log(1)')
     }
-    await config.plugins[0].generateBundle.call({ emitFile() {} }, {}, bundle)
+    await plugin.generateBundle.call({ emitFile() {} }, {}, bundle)
     expect(bundle['index.html'].source).toContain('sha384-theirs')
 
     // The tag kept its own hash, so a later rewrite of this chunk is not our
@@ -372,6 +371,16 @@ describe('regressions', () => {
     expect(out).not.toContain(sha384('console.log(1)'))
     // the neighbouring tag is untouched by the opt-out
     expect(out).toContain(sha384('console.log(2)'))
+  })
+
+  test('uses the configured crossorigin value', async () => {
+    const bundle = {
+      'index.html': html('<script src="/main.js"></script>'),
+      'main.js': chunk('main.js', 'console.log(1)')
+    }
+
+    await run({ crossorigin: 'use-credentials' }, bundle)
+    expect(bundle['index.html'].source).toContain('crossorigin="use-credentials"')
   })
 
   test('caches survive until closeBundle', () => {

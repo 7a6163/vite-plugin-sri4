@@ -10,6 +10,10 @@ export function bundleSource(item) {
   return item.type === 'chunk' ? item.code : item.source
 }
 
+// The only algorithms the SRI spec defines. Browsers reject anything else,
+// which blocks the resource with no build-time error at all.
+export const SUPPORTED_HASH_ALGORITHMS = ['sha256', 'sha384', 'sha512']
+
 /**
  * Compute an SRI string for a source that may be a string, Buffer or Uint8Array
  */
