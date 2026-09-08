@@ -1,6 +1,6 @@
 # vite-plugin-sri4
 
-![NPM Version](https://img.shields.io/npm/v/vite-plugin-sri4)
+[![NPM Version](https://img.shields.io/npm/v/vite-plugin-sri4)](https://www.npmjs.com/package/vite-plugin-sri4)
 [![codecov](https://codecov.io/gh/7a6163/vite-plugin-sri4/graph/badge.svg?token=GOVB4J3D19)](https://codecov.io/gh/7a6163/vite-plugin-sri4)
 ![License](https://img.shields.io/npm/l/vite-plugin-sri4)
 
