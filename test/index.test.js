@@ -301,6 +301,50 @@ describe('vite-plugin-sri4', () => {
       )
     })
 
+    test('should skip and warn when Cache-Control is private', async () => {
+      bundle['index.html'].source =
+        '<link rel="stylesheet" href="https://cdn.example.com/fonts.css">'
+
+      fetch.mockImplementationOnce(() => Promise.resolve({
+        ok: true,
+        headers: new Headers({
+          'access-control-allow-origin': '*',
+          'cache-control': 'private, max-age=86400'
+        })
+      }))
+
+      await generateBundleFn({}, bundle)
+
+      // CORS says yes, but a per-client response cannot have a hash pinned to
+      // it - the build-time bytes are not the bytes the browser receives.
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Cache-Control'),
+      )
+    })
+
+    test('should still add integrity when Cache-Control is public', async () => {
+      bundle['index.html'].source = '<script src="https://cdn.example.com/lib.js"></script>'
+
+      fetch
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          headers: new Headers({
+            'access-control-allow-origin': '*',
+            'cache-control': 'public, max-age=604800'
+          })
+        }))
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
+        }))
+
+      await generateBundleFn({}, bundle)
+
+      // The private gate narrows the CORS gate, it does not close it
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
     test('should add crossorigin="anonymous" alongside integrity for external resources', async () => {
       bundle['index.html'].source = '<script src="https://example.com/script.js"></script>'
 
@@ -1100,6 +1144,40 @@ describe('vite-plugin-sri4', () => {
 
       // Should not add integrity for bypassed domain
       expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+    })
+
+    test('bypasses fonts.googleapis.com by default, alongside a user list', async () => {
+      // The default list is merged, not defaulted: a user who passes
+      // bypassDomains must not silently lose it and get a build whose Google
+      // Fonts stylesheet the browser blocks.
+      const plugin = sri({
+        bypassDomains: ['www.googletagmanager.com']
+      })
+      const config = {
+        base: '/',
+        plugins: [{
+          name: 'vite:build-import-analysis',
+          generateBundle: vi.fn()
+        }]
+      }
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source:
+            '<link href="https://fonts.googleapis.com/css2?family=Roboto" rel="stylesheet">' +
+            '<script src="https://www.googletagmanager.com/gtag/js"></script>'
+        }
+      }
+
+      fetch.mockReset()
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+      // Bypassed hosts cost no build-time request at all
+      expect(fetch).not.toHaveBeenCalled()
     })
 
     test('should bypass domains using partial matching', async () => {

@@ -22,6 +22,18 @@ export function isUrlFromBypassDomain(url, bypassDomains = [], logger = null) {
 }
 
 /**
+ * `Cache-Control: private`, in either the bare or the `private="field"` form.
+ * Substring matching would be wrong - a directive like `x-private` is not this.
+ */
+function isPrivateResponse(cacheControl) {
+  if (!cacheControl) return false
+  return cacheControl.split(',').some(directive => {
+    const token = directive.trim().toLowerCase()
+    return token === 'private' || token.startsWith('private=')
+  })
+}
+
+/**
  * Resource check with retry mechanism
  */
 export async function checkResourceSupport(url, urlSupportCache, logger = null, retries = 2) {
@@ -49,6 +61,32 @@ export async function checkResourceSupport(url, urlSupportCache, logger = null, 
       // is the safe outcome, but say so at warn level - silence here is what
       // makes an unprotected resource easy to miss.
       const corsHeader = response.headers.get('access-control-allow-origin')
+
+      // Reachable and CORS-eligible is not the same property as byte-stable.
+      // `private` is the origin declaring this response unsafe to share
+      // between clients, and a response that cannot be shared between clients
+      // cannot have a hash pinned to it either: what we fetch here is one
+      // client's copy. Google Fonts is the case in the wild - it answers
+      // `access-control-allow-origin: *` while serving different @font-face
+      // blocks per client, so the CORS gate alone waves it through and the
+      // browser then blocks a stylesheet whose hash matches nothing.
+      //
+      // Deliberately not `vary`: Google varies on User-Agent without
+      // declaring it (`vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`),
+      // so a vary-based gate lets this exact resource straight through.
+      const cacheControl = response.headers.get('cache-control')
+      if (response.ok && isPrivateResponse(cacheControl)) {
+        if (logger) {
+          logger.warn(
+            `Skipping SRI for ${url}: Cache-Control is "${cacheControl}", so the origin serves ` +
+            'a per-client response and the bytes hashed at build time are not the bytes the ' +
+            'browser receives. Add the domain to bypassDomains to silence this.'
+          )
+        }
+        urlSupportCache.set(url, false)
+        return false
+      }
+
       const isSupported = response.ok && corsHeader === '*'
       if (response.ok && corsHeader && corsHeader !== '*' && logger) {
         logger.warn(
