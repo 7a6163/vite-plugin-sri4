@@ -19,7 +19,8 @@ export default {
   ],
   external: [
     'vite',
-    'cross-fetch',
-    'node:crypto'
+    'node:crypto',
+    'node:fs/promises',
+    'node:path'
   ]
 };

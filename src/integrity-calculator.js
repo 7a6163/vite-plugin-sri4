@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isUrlFromBypassDomain, checkResourceSupport, fetchResource } from './network-utils.js'
 
@@ -84,6 +85,48 @@ export function findBundleKey(bundle, bundleKey, logger = null) {
 }
 
 /**
+ * Read an asset that lives in `publicDir` rather than the bundle.
+ *
+ * Files copied verbatim from `public/` never appear as bundle entries, so
+ * without this a perfectly normal `<script src="/sw.js">` fails the build.
+ * Returns null rather than throwing so the caller keeps its own missing-asset
+ * policy.
+ */
+async function readPublicAsset(config, bundleKey, logger) {
+  const publicDir = config.publicDir
+  if (!publicDir) return null
+
+  // Bundle keys come from URLs, which may be percent-encoded
+  let decoded
+  try {
+    decoded = decodeURIComponent(bundleKey)
+  } catch {
+    decoded = bundleKey
+  }
+
+  const filePath = path.resolve(publicDir, decoded)
+
+  // A URL must never reach outside publicDir, however it is spelled
+  const relative = path.relative(publicDir, filePath)
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    if (logger) {
+      logger.warn(`Refusing to read outside publicDir: ${bundleKey}`)
+    }
+    return null
+  }
+
+  try {
+    const source = await readFile(filePath)
+    if (logger) {
+      logger.debug(`Resolved from publicDir: ${bundleKey}`)
+    }
+    return source
+  } catch {
+    return null
+  }
+}
+
+/**
  * Calculate SRI integrity hash for a given resource
  */
 export async function calculateIntegrity(
@@ -144,13 +187,23 @@ export async function calculateIntegrity(
         }
         bundleFileName = possibleMatch
         source = bundleSource(bundle[possibleMatch])
-      } else if (ignoreMissingAsset) {
-        if (logger) {
-          logger.warn(`Asset not found in bundle: ${url} (path: ${htmlPath}, key: ${bundleKey})`)
-        }
-        return null
       } else {
-        throw new Error(`Asset ${url} not found in bundle (path: ${htmlPath}, key: ${bundleKey})`)
+        // Not a build output - it may still be a file copied from publicDir
+        source = await readPublicAsset(config, bundleKey, logger)
+
+        if (!source) {
+          if (ignoreMissingAsset) {
+            if (logger) {
+              logger.warn(
+                `Asset not found in bundle or publicDir: ${url} (path: ${htmlPath}, key: ${bundleKey})`
+              )
+            }
+            return null
+          }
+          throw new Error(
+            `Asset ${url} not found in bundle or publicDir (path: ${htmlPath}, key: ${bundleKey})`
+          )
+        }
       }
     } else {
       bundleFileName = bundleKey

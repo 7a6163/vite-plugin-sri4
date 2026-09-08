@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { build } from 'vite'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import sri from '../src/index.js'
@@ -33,6 +33,10 @@ beforeAll(() => {
     document.body.addEventListener('click', () => import('./routes/about.js'))
   `)
   writeFileSync(path.join(root, 'routes', 'about.js'), 'export const about = "about"\n')
+
+  // Files copied verbatim from public/ never become bundle entries
+  mkdirSync(path.join(root, 'public'))
+  writeFileSync(path.join(root, 'public', 'sw.js'), 'self.addEventListener("fetch", () => {})\n')
 })
 
 afterAll(() => rmSync(root, { recursive: true, force: true }))
@@ -334,6 +338,40 @@ describe('regressions', () => {
     // problem and must not fail the build.
     bundle['main.js'].code = 'console.log(2)'
     expect(() => plugin.writeBundle({}, bundle)).not.toThrow()
+  })
+
+  test('hashes an asset that lives in publicDir, not the bundle', async () => {
+    const bundle = { 'index.html': html('<script src="/sw.js"></script>') }
+
+    await run({}, bundle, { publicDir: path.join(root, 'public') })
+
+    const source = readFileSync(path.join(root, 'public', 'sw.js'))
+    expect(bundle['index.html'].source).toContain(sha384(source))
+  })
+
+  test('refuses to read outside publicDir', async () => {
+    const bundle = { 'index.html': html('<script src="/../../etc/passwd"></script>') }
+
+    // Escaping publicDir must not resolve; with the default policy that is a
+    // build failure, never a hash of a file outside the project.
+    await expect(run({}, bundle, { publicDir: path.join(root, 'public') }))
+      .rejects.toThrow(/not found in bundle or publicDir/)
+  })
+
+  test('leaves a skip-sri tag alone and strips the marker', async () => {
+    const bundle = {
+      'index.html': html('<script skip-sri src="/main.js"></script><script src="/a.js"></script>'),
+      'main.js': chunk('main.js', 'console.log(1)'),
+      'a.js': chunk('a.js', 'console.log(2)')
+    }
+
+    await run({}, bundle)
+    const out = bundle['index.html'].source
+
+    expect(out).not.toContain('skip-sri')
+    expect(out).not.toContain(sha384('console.log(1)'))
+    // the neighbouring tag is untouched by the opt-out
+    expect(out).toContain(sha384('console.log(2)'))
   })
 
   test('caches survive until closeBundle', () => {
