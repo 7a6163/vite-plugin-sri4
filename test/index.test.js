@@ -1,9 +1,11 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { sri } from '../src/index.js'
 import { createHash } from 'crypto'
-import fetch from 'cross-fetch'
 
-vi.mock('cross-fetch')
+// The plugin uses global fetch rather than a dependency, so stub the global.
+const fetch = vi.fn()
+vi.stubGlobal('fetch', fetch)
+
 vi.mock('crypto')
 
 describe('vite-plugin-sri4', () => {

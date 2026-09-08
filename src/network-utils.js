@@ -1,5 +1,5 @@
-import fetch from 'cross-fetch'
-
+// Global fetch, stable since Node 18 - the floor the Vite 6.4 peer range
+// already implies. No dependency needed.
 const DEFAULT_TIMEOUT = 5000
 
 /**

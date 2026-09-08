@@ -7,24 +7,23 @@
   "module": "./dist/index.js",
   "exports": {
     ".": {
+      "types": "./types/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "types"
   ],
   "scripts": {
     "build": "rollup -c",
     "dev": "rollup -c -w",
-    "lint": "oxlint src test example rollup.config.mjs vitest.config.js",
+    "lint": "oxlint src test types example rollup.config.mjs vitest.config.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "prepublishOnly": "npm run build"
-  },
-  "dependencies": {
-    "cross-fetch": "^4.1.0"
   },
   "peerDependencies": {
     "vite": "^6.4.0 || ^7.0.0 || ^8.0.0"
@@ -56,5 +55,9 @@
   "bugs": {
     "url": "https://github.com/7a6163/vite-plugin-sri4/issues"
   },
-  "homepage": "https://github.com/7a6163/vite-plugin-sri4#readme"
+  "homepage": "https://github.com/7a6163/vite-plugin-sri4#readme",
+  "types": "./types/index.d.ts",
+  "engines": {
+    "node": ">=18"
+  }
 }

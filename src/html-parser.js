@@ -71,7 +71,15 @@ function insertOffset(tag, endOffset) {
 }
 
 /**
- * Process a single match to create an integrity change object
+ * Per-tag opt out. `<script skip-sri src="...">` is left alone, and the marker
+ * attribute is stripped so it does not ship to the browser. More granular than
+ * bypassDomains, which only reaches external hosts.
+ */
+const SKIP_SRI_ATTR_RE = /\s+skip-sri(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>/]+))?/i
+
+/**
+ * Process a single match into a text edit: { start, end, content }. An
+ * insertion has start === end; a removal has empty content.
  */
 async function processMatch(
   match,
@@ -84,6 +92,20 @@ async function processMatch(
   logger
 ) {
   const tag = match[0]
+
+  const skip = SKIP_SRI_ATTR_RE.exec(tag)
+  if (skip) {
+    return {
+      start: match.index + skip.index,
+      end: match.index + skip.index + skip[0].length,
+      content: '',
+      url: pattern.getUrl(tag),
+      skipped: true
+    }
+  }
+
+  // Nothing to do for a tag that already carries its own hash, and computing
+  // one anyway would register it for the writeBundle drift check
   if (INTEGRITY_ATTR_RE.test(tag)) return null
 
   const url = pattern.getUrl(tag)
@@ -99,15 +121,15 @@ async function processMatch(
     logger
   )
 
-  if (integrity) {
-    return {
-      integrity,
-      position: match.index + insertOffset(tag, pattern.endOffset),
-      tag,
-      url // For logging
-    }
+  if (!integrity) return null
+
+  let content = ` integrity="${integrity}"`
+  if (!CROSSORIGIN_ATTR_RE.test(tag)) {
+    content += ' crossorigin="anonymous"'
   }
-  return null
+
+  const at = match.index + insertOffset(tag, pattern.endOffset)
+  return { start: at, end: at, content, url }
 }
 
 /**
@@ -178,16 +200,12 @@ async function collectIntegrityChanges(
  * Apply integrity changes to HTML content
  */
 function applyIntegrityChanges(html, changes, logger) {
-  // Sort by position in descending order to insert from back to front
-  changes.sort((a, b) => b.position - a.position)
+  // Back to front, so earlier offsets stay valid as the string is edited
+  changes.sort((a, b) => b.start - a.start)
 
-  for (const { integrity, position, tag, url } of changes) {
-    let insertText = ` integrity="${integrity}"`
-    if (!CROSSORIGIN_ATTR_RE.test(tag)) {
-      insertText += ' crossorigin="anonymous"'
-    }
-    html = html.slice(0, position) + insertText + html.slice(position)
-    logger.debug(`Added integrity for: ${url}`)
+  for (const { start, end, content, url, skipped } of changes) {
+    html = html.slice(0, start) + content + html.slice(end)
+    logger.debug(skipped ? `Skipped (skip-sri): ${url}` : `Added integrity for: ${url}`)
   }
 
   return html
