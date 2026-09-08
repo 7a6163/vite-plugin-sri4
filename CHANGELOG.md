@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Documentation
+
+- **The comparison with `vite-plugin-sri3` is now accurate and in its own section.** The old one-line claim listed "a CORS pre-check with timeouts and retries" as a differentiator — the HEAD probe removed in 5.1.0 — and credited this plugin with `publicDir` resolution and `skip-sri`, which sri3 has had since 1.2.0 and 1.3.0. Checked against sri3 `2.0.0`'s source rather than memory, including where sri3 is the better choice: it supports Vite 3 through 5, which this plugin dropped.
+
 ## [5.1.0] - 2026-09-09
 
 ### Bug Fixes

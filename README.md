@@ -16,6 +16,7 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - [External Resources](#external-resources)
 - [When SRI Actually Helps](#when-sri-actually-helps)
 - [How It Attaches Hashes](#how-it-attaches-hashes)
+- [Differences from vite-plugin-sri3](#differences-from-vite-plugin-sri3)
 - [Example Project](#example-project)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -247,7 +248,7 @@ There are three places a Vite plugin can compute SRI hashes, and they are not eq
 
 Only the entry chunk is affected, so a build without a dynamic import will not reveal the difference. As a second safeguard, every hashed file is re-hashed in `writeBundle` and the build fails if anything changed after the hash was taken.
 
-This ordering constraint was first identified by [vite-plugin-sri3](https://github.com/yoyo930021/vite-plugin-sri3), which this plugin began as a fork of. Beyond it, this plugin adds `crossorigin` injection, a CORS pre-check with timeouts and retries for external resources, import map and manifest output for dynamically imported routes, `publicDir` resolution, and the drift check above.
+This ordering constraint was first identified by [vite-plugin-sri3](https://github.com/yoyo930021/vite-plugin-sri3), which this plugin began as a fork of. See [Differences from vite-plugin-sri3](#differences-from-vite-plugin-sri3).
 
 ## Example Project
 
@@ -350,9 +351,31 @@ Please make sure to:
 - Follow the existing code style
 - Update the CHANGELOG.md
 
-## Inspiration
+## Differences from vite-plugin-sri3
 
-This project was inspired by [vite-plugin-sri3](https://github.com/yoyo930021/vite-plugin-sri3), which provides subresource integrity for Vite. We've built upon its foundation to create an enhanced version with additional features and improved compatibility.
+This plugin began as a fork of [vite-plugin-sri3](https://github.com/yoyo930021/vite-plugin-sri3) and the two have since diverged. Compared against sri3 `2.0.0`:
+
+| | sri3 2.0.0 | sri4 5.1.0 |
+|---|---|---|
+| Vite range | `^3 ‖ ^4 ‖ ^5 ‖ ^6 ‖ ^7 ‖ ^8` | `^6.4 ‖ ^7 ‖ ^8` |
+| Bundle outputs | ✅ | ✅ |
+| `publicDir` assets | ✅ | ✅ |
+| `skip-sri` per-tag opt-out | ✅ | ✅ |
+| TypeScript definitions | ✅ | ✅ |
+| Hash algorithm | `sha384`, fixed | `sha256` / `sha384` / `sha512`, validated at startup |
+| `crossorigin` attribute | not injected | injected, `anonymous` or `use-credentials` |
+| External resources | fetched unconditionally | gated on reachability, CORS and immutability |
+| Timeout / retry / cache on those fetches | ❌ | ✅ |
+| `bypassDomains` / `trustDomains` | ❌ | ✅ |
+| Hash drift detection | ❌ | re-hashed in `writeBundle`, build fails on drift |
+| `import()`-loaded routes, SSR | ❌ | `importmap` and `manifest` options |
+| Hook ordering | monkey-patches Vite's `generateBundle` | repositions itself in `config.plugins` |
+
+**Where sri3 is the better fit:** it supports Vite 3 through 5, which this plugin dropped. If you are on an older Vite, it is the only one of the two that works.
+
+**The difference that matters most:** sri3 injects `integrity` without `crossorigin`. SRI on a cross-origin resource requires CORS, so a browser blocks a cross-origin `<script>` or `<link>` that carries `integrity` and no `crossorigin` — which makes sri3's external-resource support difficult to use for the case SRI is usually reached for. That gap is what most of the column above grew out of: injecting `crossorigin` means the CORS response has to be checked at build time, and checking it exposed everything else worth checking.
+
+## Inspiration
 
 Other projects that influenced this work:
 - [rollup-plugin-sri](https://github.com/JonasKruckenberg/rollup-plugin-sri)
