@@ -14,7 +14,8 @@
   },
   "files": [
     "dist",
-    "types"
+    "types",
+    "LICENSE"
   ],
   "scripts": {
     "build": "rollup -c",
@@ -44,7 +45,7 @@
     "subresource integrity"
   ],
   "author": "Zac",
-  "license": "ISC",
+  "license": "MIT",
   "publishConfig": {
     "access": "public"
   },
