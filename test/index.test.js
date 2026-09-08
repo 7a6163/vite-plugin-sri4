@@ -2,16 +2,9 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { sri } from '../src/index.js'
 import { createHash } from 'crypto'
 import fetch from 'cross-fetch'
-import path from 'path'
 
 vi.mock('cross-fetch')
 vi.mock('crypto')
-vi.mock('path', () => ({
-  posix: {
-    resolve: vi.fn((base, path) => base + path),
-    dirname: vi.fn((path) => path.replace(/\/[^/]*$/, ''))
-  }
-}))
 
 describe('vite-plugin-sri4', () => {
   // Save original console methods to restore later
@@ -264,6 +257,44 @@ describe('vite-plugin-sri4', () => {
 
       expect(fetch).toHaveBeenCalled()
       expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('should fetch a protocol-relative URL over https rather than skip it', async () => {
+      bundle['index.html'].source = '<script src="//cdn.example.com/script.js"></script>'
+
+      fetch
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          headers: new Headers({ 'access-control-allow-origin': '*' })
+        }))
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
+        }))
+
+      await generateBundleFn({}, bundle)
+
+      // `//host/path` is a real CDN reference, not a data:/blob: URI
+      expect(fetch).toHaveBeenCalledWith('https://cdn.example.com/script.js', expect.anything())
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('should skip and warn when Access-Control-Allow-Origin is not "*"', async () => {
+      bundle['index.html'].source = '<script src="https://example.com/script.js"></script>'
+
+      fetch.mockImplementationOnce(() => Promise.resolve({
+        ok: true,
+        headers: new Headers({ 'access-control-allow-origin': 'https://someone-else.example' })
+      }))
+
+      await generateBundleFn({}, bundle)
+
+      // Injecting crossorigin="anonymous" here would block a script that
+      // currently loads fine, so the tag is left alone - but not silently.
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Access-Control-Allow-Origin'),
+      )
     })
 
     test('should add crossorigin="anonymous" alongside integrity for external resources', async () => {
@@ -576,9 +607,7 @@ describe('vite-plugin-sri4', () => {
       expect(console.warn).toHaveBeenCalled()
     })
 
-    test('should log warning for missing assets when ignoreMissingAsset is false', async () => {
-      // If your implementation doesn't throw for missing assets when ignoreMissingAsset is false
-      // let's test what it actually does
+    test('should throw for missing assets when ignoreMissingAsset is false', async () => {
       const plugin = sri({ ignoreMissingAsset: false })
       const config = {
         base: '/',
@@ -598,14 +627,9 @@ describe('vite-plugin-sri4', () => {
       plugin.configResolved(config)
       const generateBundle = config.plugins[0].generateBundle
 
-      try {
-        await generateBundle({}, bundle)
-        // If it doesn't throw, check if it logs at least
-        expect(console.warn).toHaveBeenCalled()
-      } catch (error) {
-        // If it throws, that's also fine
-        expect(error).toBeTruthy()
-      }
+      await expect(generateBundle({}, bundle)).rejects.toThrow(/not found in bundle/)
+      // The build fails rather than silently shipping a tag without integrity
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
     })
 
     test('should handle fetch errors when retrieving external resources', async () => {
@@ -1221,13 +1245,10 @@ describe('vite-plugin-sri4', () => {
       plugin.configResolved(config)
       const generateBundle = config.plugins[0].generateBundle
 
-      // Should not throw, but might log an error
-      await generateBundle({}, bundle)
+      // An algorithm Node cannot use must fail the build, not ship without SRI
+      await expect(generateBundle({}, bundle)).rejects.toThrow(/Digest method not supported/)
 
-      // Verify the createHash was called at least once
       expect(createHashCalled).toBe(true)
-
-      // Test now passes as long as it gracefully handled the invalid algorithm
     })
 
     test('should check handling of empty base path', async () => {
@@ -1414,18 +1435,12 @@ describe('vite-plugin-sri4', () => {
 
       await config.plugins[0].generateBundle({}, bundle)
 
-      // If your implementation respects the silent level, nothing should be logged
-      // If it doesn't, that's also fine - just log a note about it
-      if (console.warn.mock.calls.length > 0 ||
-          console.debug.mock.calls.length > 0 ||
-          console.error.mock.calls.length > 0 ||
-          console.log.mock.calls.length > 0) {
-        console.warn = originalConsoleWarn
-        console.warn("NOTE: Your implementation doesn't fully respect the 'silent' log level.")
-      }
-
-      // Test passes either way - we're just checking behavior
-      expect(true).toBe(true)
+      // `silent` must suppress every channel. It used to resolve to `warn`
+      // because its level is 0 and the lookup used `||`.
+      expect(console.warn).not.toHaveBeenCalled()
+      expect(console.debug).not.toHaveBeenCalled()
+      expect(console.error).not.toHaveBeenCalled()
+      expect(console.log).not.toHaveBeenCalled()
     })
   })
 
