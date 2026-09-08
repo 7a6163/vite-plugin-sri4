@@ -55,7 +55,8 @@ describe('vite-plugin-sri4', () => {
     fetch.mockImplementation(() => Promise.resolve({
       ok: true,
       headers: new Headers({
-        'access-control-allow-origin': '*'
+        'access-control-allow-origin': '*',
+        'cache-control': 'public, max-age=31536000, immutable'
       }),
       arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
     }))
@@ -249,7 +250,8 @@ describe('vite-plugin-sri4', () => {
         .mockImplementationOnce(() => Promise.resolve({
           ok: true,
           headers: new Headers({
-            'access-control-allow-origin': '*'
+            'access-control-allow-origin': '*',
+            'cache-control': 'public, max-age=31536000, immutable'
           })
         }))
         .mockImplementationOnce(() => Promise.resolve({
@@ -269,7 +271,10 @@ describe('vite-plugin-sri4', () => {
       fetch
         .mockImplementationOnce(() => Promise.resolve({
           ok: true,
-          headers: new Headers({ 'access-control-allow-origin': '*' })
+          headers: new Headers({
+          'access-control-allow-origin': '*',
+          'cache-control': 'public, max-age=31536000, immutable'
+        })
         }))
         .mockImplementationOnce(() => Promise.resolve({
           ok: true,
@@ -301,37 +306,38 @@ describe('vite-plugin-sri4', () => {
       )
     })
 
-    test('should skip and warn when Cache-Control is private', async () => {
-      bundle['index.html'].source =
-        '<link rel="stylesheet" href="https://cdn.example.com/fonts.css">'
+    test('should skip and warn when the origin does not declare the URL immutable', async () => {
+      bundle['index.html'].source = '<script src="https://cdn.example.com/widget.js"></script>'
 
       fetch.mockImplementationOnce(() => Promise.resolve({
         ok: true,
         headers: new Headers({
           'access-control-allow-origin': '*',
-          'cache-control': 'private, max-age=86400'
+          // Ordinary `public` caching, and it still rolls - this is the case a
+          // `Cache-Control: private` blacklist misses (cdn.tailwindcss.com,
+          // plausible.io, jsdelivr's floating `@3` paths all look like this).
+          'cache-control': 'public, max-age=604800'
         })
       }))
 
       await generateBundleFn({}, bundle)
 
-      // CORS says yes, but a per-client response cannot have a hash pinned to
-      // it - the build-time bytes are not the bytes the browser receives.
       expect(bundle['index.html'].source).not.toMatch(/integrity=/)
       expect(console.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Cache-Control'),
+        expect.stringContaining('does not declare'),
       )
     })
 
-    test('should still add integrity when Cache-Control is public', async () => {
-      bundle['index.html'].source = '<script src="https://cdn.example.com/lib.js"></script>'
+    test('should add integrity when Cache-Control says immutable', async () => {
+      bundle['index.html'].source =
+        '<link rel="stylesheet" href="https://cdn.example.com/bootstrap@5.3.3.css">'
 
       fetch
         .mockImplementationOnce(() => Promise.resolve({
           ok: true,
           headers: new Headers({
             'access-control-allow-origin': '*',
-            'cache-control': 'public, max-age=604800'
+            'cache-control': 'public, max-age=31536000, immutable'
           })
         }))
         .mockImplementationOnce(() => Promise.resolve({
@@ -341,7 +347,28 @@ describe('vite-plugin-sri4', () => {
 
       await generateBundleFn({}, bundle)
 
-      // The private gate narrows the CORS gate, it does not close it
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('should add integrity for a year-long max-age without the immutable keyword', async () => {
+      bundle['index.html'].source = '<script src="https://cdn.example.com/htmx@1.9.12.js"></script>'
+
+      fetch
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          headers: new Headers({
+            'access-control-allow-origin': '*',
+            // unpkg spells a pinned version this way, with no `immutable`
+            'cache-control': 'public, max-age=31536000'
+          })
+        }))
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
+        }))
+
+      await generateBundleFn({}, bundle)
+
       expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
     })
 
@@ -352,7 +379,8 @@ describe('vite-plugin-sri4', () => {
         .mockImplementationOnce(() => Promise.resolve({
           ok: true,
           headers: new Headers({
-            'access-control-allow-origin': '*'
+            'access-control-allow-origin': '*',
+            'cache-control': 'public, max-age=31536000, immutable'
           })
         }))
         .mockImplementationOnce(() => Promise.resolve({
@@ -1021,7 +1049,8 @@ describe('vite-plugin-sri4', () => {
       fetch.mockImplementation(() => Promise.resolve({
         ok: true,
         headers: new Headers({
-          'access-control-allow-origin': '*'
+          'access-control-allow-origin': '*',
+          'cache-control': 'public, max-age=31536000, immutable'
         }),
         arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
       }))
@@ -1146,12 +1175,9 @@ describe('vite-plugin-sri4', () => {
       expect(bundle['index.html'].source).not.toMatch(/integrity=/)
     })
 
-    test('bypasses fonts.googleapis.com by default, alongside a user list', async () => {
-      // The default list is merged, not defaulted: a user who passes
-      // bypassDomains must not silently lose it and get a build whose Google
-      // Fonts stylesheet the browser blocks.
+    test('trustDomains hashes a host that does not declare itself immutable', async () => {
       const plugin = sri({
-        bypassDomains: ['www.googletagmanager.com']
+        trustDomains: ['assets.internal.example']
       })
       const config = {
         base: '/',
@@ -1165,19 +1191,27 @@ describe('vite-plugin-sri4', () => {
           type: 'asset',
           fileName: 'index.html',
           source:
-            '<link href="https://fonts.googleapis.com/css2?family=Roboto" rel="stylesheet">' +
-            '<script src="https://www.googletagmanager.com/gtag/js"></script>'
+            '<script src="https://assets.internal.example/app.js"></script>' +
+            '<script src="https://cdn.example.com/widget.js"></script>'
         }
       }
 
       fetch.mockReset()
+      fetch.mockImplementation(() => Promise.resolve({
+        ok: true,
+        headers: new Headers({
+          'access-control-allow-origin': '*',
+          'cache-control': 'public, max-age=300'
+        }),
+        arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
+      }))
 
       plugin.configResolved(config)
       await plugin.generateBundle({}, bundle)
 
-      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
-      // Bypassed hosts cost no build-time request at all
-      expect(fetch).not.toHaveBeenCalled()
+      // Same headers on both: the trusted host is hashed anyway, the other is not
+      expect(bundle['index.html'].source).toMatch(/assets\.internal\.example.*integrity=/)
+      expect(bundle['index.html'].source).not.toMatch(/cdn\.example\.com[^>]*integrity=/)
     })
 
     test('should bypass domains using partial matching', async () => {
@@ -1238,7 +1272,8 @@ describe('vite-plugin-sri4', () => {
       fetch.mockImplementation(() => Promise.resolve({
         ok: true,
         headers: new Headers({
-          'access-control-allow-origin': '*'
+          'access-control-allow-origin': '*',
+          'cache-control': 'public, max-age=31536000, immutable'
         }),
         arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer)
       }))
@@ -1569,7 +1604,8 @@ describe('vite-plugin-sri4', () => {
         .mockImplementationOnce(() => Promise.resolve({
           ok: true,
           headers: new Headers({
-            'access-control-allow-origin': '*'
+            'access-control-allow-origin': '*',
+            'cache-control': 'public, max-age=31536000, immutable'
           })
         }))
         .mockImplementationOnce(() => Promise.resolve({
@@ -1608,7 +1644,8 @@ describe('vite-plugin-sri4', () => {
         .mockImplementationOnce(() => Promise.resolve({
           ok: true,
           headers: new Headers({
-            'access-control-allow-origin': '*'
+            'access-control-allow-origin': '*',
+            'cache-control': 'public, max-age=31536000, immutable'
           })
         }))
         .mockImplementationOnce(() => Promise.resolve({
