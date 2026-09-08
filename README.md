@@ -27,8 +27,8 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 
 - **Automatic SRI Generation:** Computes SRI hashes for assets (chunks and files) using a configurable algorithm (default is `sha384`).
 - **HTML Injection:** Automatically injects `integrity` and `crossorigin` attributes into `<script>` and `<link>` tags in your HTML.
-- **CORS Support Check:** For external resources, a CORS check is performed to verify access via `Access-Control-Allow-Origin`.
-- **Bypass Domains:** Option to specify domains to bypass SRI injection, plus a `skip-sri` attribute to opt out a single tag.
+- **External Resource Gating:** A resource on someone else's origin is hashed only when it is reachable, answers `Access-Control-Allow-Origin: *`, and its origin declares the URL immutable. Anything else is left alone with a warning naming the reason — a hash pins one snapshot of bytes, so it is only correct on a URL whose bytes never change. See [External resources](#external-resources).
+- **Bypass and Trust Domains:** `bypassDomains` to leave a host alone, `trustDomains` to hash one whose headers do not declare it stable, plus a `skip-sri` attribute to opt out a single tag.
 - **Public Directory Support:** Assets served verbatim from `publicDir` are hashed from disk, not just bundle outputs.
 - **Zero Dependencies:** No runtime dependencies, and TypeScript definitions are included.
 - **Missing Asset Handling:** Configurable warning suppression for missing assets.
@@ -264,10 +264,11 @@ The example project shows:
    - Consider `sha512` for maximum security
    - Avoid `sha1` as it's considered cryptographically weak
 
-2. **CORS Configuration**
-   - Ensure your CDN or hosting service supports CORS
-   - Set appropriate `Access-Control-Allow-Origin` headers
-   - Use `bypassDomains` for trusted domains that don't support CORS
+2. **External Resources**
+   - Pin a version in the URL. `unpkg.com/react@18.3.1/…` answers `max-age=31536000` and gets a hash; `unpkg.com/react@18/…` answers `max-age=60` and does not
+   - Serve your own assets with `Access-Control-Allow-Origin: *` and an immutable `Cache-Control`
+   - Use `bypassDomains` for a host you have decided not to protect — a vendor's auto-updating widget or analytics script
+   - Use `trustDomains` only for a host you control that is stable but does not say so in its headers
 
 3. **Performance Optimization**
    - Enable `ignoreMissingAsset` in development for faster builds
@@ -282,17 +283,21 @@ The example project shows:
 
 ### Common Issues
 
-1. **Missing Integrity Attributes**
-   - Check if the file is in your build output
-   - Verify the file path is correct
-   - Enable debug mode to see detailed logs
+1. **An external resource has no integrity**
+   - Read the build log. Every skip warns and names its reason
+   - `does not declare this URL immutable` — the origin's `Cache-Control` is short, or carries `private` / `no-cache` / `no-store`. Pin a version in the URL, or see [Getting a resource hashed](#getting-a-resource-hashed)
+   - `Access-Control-Allow-Origin is absent` / `not "*"` — nothing to do at build time; `bypassDomains` silences it
 
-2. **CORS Errors**
-   - Ensure the resource supports CORS
-   - Add the domain to `bypassDomains` if needed
-   - Check network tab for CORS headers
+2. **A local asset has no integrity**
+   - Check the file is in your build output, or in `publicDir`
+   - Verify the path in the tag matches, including `base`
+   - Enable debug mode to see per-resource decisions
 
-3. **Build Performance**
+3. **The browser blocks a resource that has integrity**
+   - The bytes changed after the build. If it is your own output, a plugin ordered after this one rewrote it — the `writeBundle` drift check should have failed the build, so check the plugin order
+   - If it is external, the URL is not as immutable as its headers claim. Move it to `bypassDomains`
+
+4. **Build Performance**
    - Use `ignoreMissingAsset` if you have many external resources
    - Disable debug mode in production
    - Consider using a CDN for external resources

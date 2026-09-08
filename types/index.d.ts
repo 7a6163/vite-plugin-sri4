@@ -19,8 +19,8 @@ export interface SriOptions {
 
   /**
    * Hostnames to leave untouched. Matches the host itself and its subdomains.
-   * Only applies to external (http/https) URLs; use the `skip-sri` attribute
-   * on a tag to opt a single element out.
+   * Only applies to external URLs, protocol-relative `//host/path` included;
+   * use the `skip-sri` attribute on a tag to opt a single element out.
    * @default []
    */
   bypassDomains?: string[]
