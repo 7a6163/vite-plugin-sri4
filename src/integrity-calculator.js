@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { isUrlFromBypassDomain, checkResourceSupport, fetchResource } from './network-utils.js'
+import { matchesDomain, checkResourceSupport, fetchResource } from './network-utils.js'
 
 /**
  * Read the hashable source out of a bundle entry (chunk code or asset source)
@@ -145,12 +145,13 @@ export async function calculateIntegrity(
   const {
     ignoreMissingAsset,
     bypassDomains,
+    trustDomains,
     hashAlgorithm,
     hashedAssets
   } = options
 
   // Skip specified domains
-  if (isUrlFromBypassDomain(url, bypassDomains, logger)) {
+  if (matchesDomain(url, bypassDomains, logger)) {
     return null
   }
 
@@ -165,7 +166,10 @@ export async function calculateIntegrity(
   let source
   let bundleFileName = null
   if (fetchUrl) {
-    const isSupported = await checkResourceSupport(fetchUrl, cacheManager.getUrlSupportCache(), logger)
+    const trusted = matchesDomain(fetchUrl, trustDomains, logger)
+    const isSupported = await checkResourceSupport(
+      fetchUrl, cacheManager.getUrlSupportCache(), logger, trusted
+    )
     if (!isSupported) return null
     source = await fetchResource(fetchUrl, cacheManager.getResourceCache(), logger)
     if (!source) return null

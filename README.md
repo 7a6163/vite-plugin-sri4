@@ -95,7 +95,9 @@ Output:
 * `crossorigin` (string):
   Value for the injected `crossorigin` attribute: `anonymous` (default) or `use-credentials`. Use the latter for a CDN that requires cookies or HTTP auth. Tags that already declare a `crossorigin` are left alone.
 * `bypassDomains` (Array<string>):
-  Extra domain names where SRI injection should be skipped — for external resources that do not support CORS, or that serve different bytes to different clients. Subdomains are matched too. Your list is **merged with** the built-in default (`fonts.googleapis.com`), not a replacement for it, so passing this option never re-exposes the default case. See [External resources](#external-resources).
+  Hostnames to leave untouched, subdomains included. Use it to silence the warning for a host you have decided not to protect. See [External resources](#external-resources).
+* `trustDomains` (Array<string>):
+  Hostnames whose bytes you vouch for, subdomains included. An external resource is only hashed when its origin declares the URL immutable; a host listed here is hashed regardless. For a stable host that does not set the header — not for forcing SRI onto a vendor's rolling URL. See [External resources](#external-resources).
 * `ignoreMissingAsset` (boolean):
   When true, warns instead of failing the build for assets found in neither the bundle nor `publicDir`. Default is `false`, which fails the build rather than shipping a tag with no integrity.
 * `logLevel` (string):
@@ -138,22 +140,59 @@ Hashes are computed during the build. A plugin that mutates chunk contents after
 
 ## External resources
 
-The `writeBundle` drift check above covers **your own build outputs only**. An external `<script src>` or `<link rel="stylesheet">` pointing at another origin is fetched **once, at build time, from your build machine**, and the hash is taken from that copy. Nothing re-checks it afterwards, and nothing can: the origin is free to serve different bytes to the browser than it served to your CI.
+The `writeBundle` drift check above covers **your own build outputs only**. Everything you build is hashed locally — bundle chunks and assets from their bytes, `public/` files from disk, and, with an absolute `base`, your own CDN URLs from the bundle rather than the network — so none of it depends on a server being reachable or honest at build time.
 
-Two gates decide whether an external resource gets an `integrity` attribute at all. Both must pass:
+An external URL pointing at someone else's origin is different. It is fetched **once, at build time, from your build machine**, and the hash is taken from that copy. An `integrity` attribute pins those bytes forever, so it is only correct on a URL whose bytes never change — and the origin is the only party that knows whether that is true.
 
-1. **`Access-Control-Allow-Origin: *`.** Injecting `integrity` also injects `crossorigin`, so a response scoped to one specific origin would turn a working resource into a blocked one.
-2. **No `Cache-Control: private`.** `private` is the origin declaring the response unsafe to share between clients — and a response that cannot be shared between clients cannot have a hash pinned to it either. Google Fonts is the case in the wild: it answers `Access-Control-Allow-Origin: *` while serving a different `@font-face` block per client, so the CORS gate alone waves it through and the browser then blocks a stylesheet whose hash matches nothing.
+So the plugin asks it. An external resource is hashed only when **all three** hold:
 
-Failing either gate leaves the tag untouched and logs a warning naming the URL and the reason. `Vary` is deliberately *not* used as a gate — Google varies on `User-Agent` without declaring it there, so a `Vary`-based check lets exactly this resource through.
+1. **`HEAD` succeeds.** Otherwise there is nothing to check.
+2. **`Access-Control-Allow-Origin: *`.** Injecting `integrity` also injects `crossorigin`, so a response scoped to one specific origin — or to none — would turn a working resource into a blocked one.
+3. **The origin declares the URL immutable**: `Cache-Control: immutable`, or a `max-age` of a year or more. Or the host is in `trustDomains`.
 
-`fonts.googleapis.com` is bypassed by default, so the common case needs no configuration and costs no build-time request. For anything else, `bypassDomains` is the control:
+Anything else is left alone, with a warning naming the URL and the reason. Nothing ships without integrity silently.
+
+### Why immutability, and not a list of bad origins
+
+Because the list is never finished. Version-pinned URLs and rolling ones are two clean clusters, and the CDNs drew the line themselves:
+
+| URL | `Cache-Control` | |
+|---|---|---|
+| `cdnjs …/jquery/3.7.1/jquery.min.js` | `max-age=30672000, immutable` | hashed |
+| `jsdelivr …/bootstrap@5.3.3/…` | `max-age=31536000, immutable` | hashed |
+| `unpkg …/htmx.org@1.9.12/…` | `max-age=31536000` | hashed |
+| `code.jquery.com/jquery-3.7.1.min.js` | `max-age=31536000` | hashed |
+| `jsdelivr …/vue@3/…` (floating) | `max-age=604800` | skipped |
+| `fonts.googleapis.com/css2?…` | `private, max-age=86400` | skipped |
+| `plausible.io/js/script.js` | `public, max-age=86400` | skipped |
+| `cdn.tailwindcss.com` | `max-age=14400` | skipped |
+| `connect.facebook.net/en_US/sdk.js` | `public, max-age=1200` | skipped |
+| `js.stripe.com/v3/` | `max-age=120` | skipped |
+| `unpkg …/react@18/…` (floating) | `max-age=60` | skipped |
+
+Nothing lands between 604800 and 30672000, so the threshold separates two clusters rather than splitting a spectrum.
+
+A blacklist would have to catch every one of the bottom rows individually, and the ones that are ordinary `public` responses — `cdn.tailwindcss.com`, `plausible.io` — look exactly like a resource you *should* hash. Each gap ships a build that works today and breaks whenever that vendor deploys. The whitelist fails the other way: a resource you could have protected ships unprotected, and says so in the log.
+
+`Vary` is deliberately not used. Google Fonts varies on `User-Agent` without declaring it there (`vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`), so a `Vary`-based check lets exactly that resource through.
+
+### Getting a resource hashed
+
+**Pin a version in the URL.** `unpkg.com/react@18.3.1/…` answers `max-age=31536000`; `unpkg.com/react@18/…` answers `max-age=60`. Same for jsdelivr. This is the fix, not a workaround — a floating URL and an integrity attribute are contradictory by construction.
+
+**Or vouch for the host** when you know it is stable and it just does not say so:
 
 ```js
-sri({ bypassDomains: ['www.googletagmanager.com'] })
+sri({ trustDomains: ['assets.internal.example'] })
 ```
 
-Neither gate can prove byte-stability in general — they only catch origins that declare the problem. For a resource you need SRI on, self-host it, or pin a versioned, immutable URL.
+Do not point `trustDomains` at a vendor's rolling URL. Stripe, for one, documents that `js.stripe.com/v3/` must not be pinned; forcing a hash onto it produces a page that works until their next deploy.
+
+**Or accept it and silence the warning** with `bypassDomains`. Third-party analytics and widget scripts are usually this case — they are built to auto-update, and there is nothing to pin:
+
+```js
+sri({ bypassDomains: ['www.googletagmanager.com', 'connect.facebook.net'] })
+```
 
 ## When SRI Actually Helps
 

@@ -4,7 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **External resources are hashed only when their origin declares the URL immutable.** An `integrity` attribute pins one snapshot of bytes forever, so it is only correct on a URL whose bytes never change — and the origin is the only party that knows. The plugin now requires it to say so: `Cache-Control: immutable`, or a `max-age` of a year or more. Everything else is left alone with a warning naming the URL and the reason.
+
+  This replaces the `Cache-Control: private` gate and the default `bypassDomains` entry added below, both of which were blacklist-shaped. A blacklist is never finished: `cdn.tailwindcss.com` (`max-age=14400`) and `plausible.io/js/script.js` (`public, max-age=86400`) are ordinary `public` responses that roll just the same, and every gap ships a build that works today and breaks whenever that vendor deploys. The whitelist fails the other way — a resource that could have been protected ships unprotected, and says so in the log.
+
+  The threshold is not a balancing act. Version-pinned URLs answer `max-age=30672000` or more (cdnjs, jsdelivr, unpkg, code.jquery.com); rolling ones answer `604800` or less (jsdelivr `@3`, Google Fonts, plausible, Tailwind's CDN, Facebook's SDK, `js.stripe.com/v3/`, unpkg `@18`). Nothing lands in between.
+
+  **What changes for you:** a version-pinned third-party library keeps its integrity. A floating or rolling URL loses it and starts warning. Your own build outputs are entirely unaffected — bundle entries, `public/` files and, with an absolute `base`, your own CDN URLs are all hashed locally without a request.
+
+- **`bypassDomains` no longer has a built-in default.** `fonts.googleapis.com` needed one only because the `private` gate did not catch it cheaply; the immutability check skips it on its own (`private, max-age=86400`). Your list is once again exactly what you pass.
+
+### Features
+
+- **`trustDomains` option.** Hostnames whose bytes you vouch for, matched on the host and its subdomains, hashed regardless of what the origin declares. For a stable host that does not set the header — not for forcing SRI onto a vendor's rolling URL, which breaks on their next deploy.
+
 ### Bug Fixes
+
+- **Every skipped external resource now says why.** A `HEAD` that failed, or a response with no `Access-Control-Allow-Origin` at all, used to skip in silence — only a *concrete* non-`*` origin warned. `cdn.tailwindcss.com` (a 302 with no CORS header) shipped with no integrity and nothing in the log.
 
 - **External resources are gated on byte-stability, not just CORS reachability.** `checkResourceSupport()` returned true on `response.ok && Access-Control-Allow-Origin: *` and treated that as proof the bytes fetched at build time are the bytes a browser receives. They are different properties. Where they diverge the injected hash matches nothing, the browser blocks the resource, and the build still exits 0. A response is now also skipped when it carries `Cache-Control: private` - the origin declaring it unsafe to share between clients, and a response that cannot be shared between clients cannot have a hash pinned to it either. The skip warns, naming the URL, the header and `bypassDomains`, in the same shape as the existing non-`*` CORS warning. `Vary` is deliberately not the signal: Google Fonts varies on `User-Agent` without declaring it (`vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`), so a `Vary`-based gate lets exactly this resource through.
 
