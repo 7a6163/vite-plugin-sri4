@@ -96,9 +96,31 @@ function isImmutableResponse(cacheControl) {
 /**
  * Resource check with retry mechanism
  */
-export async function checkResourceSupport(url, urlSupportCache, logger = null, trusted = false, retries = 2) {
-  if (urlSupportCache.has(url)) {
-    return urlSupportCache.get(url)
+/**
+ * Fetch an external resource and return its bytes, or null if it must not be
+ * hashed. The reason is always logged - a tag that silently ships without
+ * integrity is the thing that is easy to miss.
+ *
+ * One GET, not a HEAD probe followed by a GET. The headers the gates need
+ * arrive on the response that carries the bytes anyway, so probing separately
+ * doubled the requests and threw the useful copy away - and made the plugin
+ * depend on HEAD being served at all. It often is not: js.tappaysdk.com
+ * answers 403 to HEAD and 200 to GET, which used to read as "could not be
+ * checked" on a payment SDK, exactly the kind of script SRI is for.
+ *
+ * The cost is that a rejected resource is downloaded before it is rejected.
+ * That is the right side to lose on: the accepted case, which is every build
+ * that actually ships hashes, goes from two requests to one.
+ */
+export async function fetchVerifiedResource(url, resourceCache, logger = null, trusted = false, retries = 1) {
+  if (resourceCache.has(url)) {
+    return resourceCache.get(url)
+  }
+
+  const reject = (message) => {
+    if (logger && message) logger.warn(message)
+    resourceCache.set(url, null)
+    return null
   }
 
   let lastError
@@ -107,24 +129,15 @@ export async function checkResourceSupport(url, urlSupportCache, logger = null, 
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT)
 
-      const response = await fetch(url, {
-        method: 'HEAD',
-        signal: controller.signal
-      })
+      const response = await fetch(url, { signal: controller.signal })
 
       clearTimeout(timeoutId)
 
-      // Every path out of here that skips a resource says why. A tag that
-      // silently ships without integrity is the thing that is easy to miss.
       if (!response.ok) {
-        if (logger) {
-          logger.warn(
-            `Skipping SRI for ${url}: HEAD returned ${response.status}, so the resource ` +
-            'could not be checked. Add the domain to bypassDomains to silence this.'
-          )
-        }
-        urlSupportCache.set(url, false)
-        return false
+        return reject(
+          `Skipping SRI for ${url}: the server answered ${response.status}. ` +
+          'Add the domain to bypassDomains to silence this.'
+        )
       }
 
       // Only `*` can be verified at build time. Injecting integrity also means
@@ -133,16 +146,12 @@ export async function checkResourceSupport(url, urlSupportCache, logger = null, 
       // served from, that turns a working script into a blocked one.
       const corsHeader = response.headers.get('access-control-allow-origin')
       if (corsHeader !== '*') {
-        if (logger) {
-          logger.warn(
-            `Skipping SRI for ${url}: Access-Control-Allow-Origin is ` +
-            `${corsHeader ? `"${corsHeader}", not "*"` : 'absent'}, so crossorigin="anonymous" ` +
-            'cannot be verified at build time. ' +
-            'Add the domain to bypassDomains to silence this.'
-          )
-        }
-        urlSupportCache.set(url, false)
-        return false
+        return reject(
+          `Skipping SRI for ${url}: Access-Control-Allow-Origin is ` +
+          `${corsHeader ? `"${corsHeader}", not "*"` : 'absent'}, so crossorigin="anonymous" ` +
+          'cannot be verified at build time. ' +
+          'Add the domain to bypassDomains to silence this.'
+        )
       }
 
       // Reachable and CORS-eligible is not the same property as byte-stable.
@@ -159,29 +168,23 @@ export async function checkResourceSupport(url, urlSupportCache, logger = null, 
       // so a vary-based gate would let that resource straight through.
       const cacheControl = response.headers.get('cache-control')
       if (!trusted && !isImmutableResponse(cacheControl)) {
-        if (logger) {
-          logger.warn(
-            `Skipping SRI for ${url}: Cache-Control is ` +
-            `${cacheControl ? `"${cacheControl}"` : 'absent'}, so the origin does not declare ` +
-            'this URL immutable and its bytes may differ from the ones hashed here. Pin a ' +
-            'version in the URL, or add the domain to bypassDomains to accept it unprotected. ' +
-            'Only reach for trustDomains on a host you control - forcing a hash onto a ' +
-            "vendor's rolling URL ships a page that breaks on their next deploy."
-          )
-        }
-        urlSupportCache.set(url, false)
-        return false
+        return reject(
+          `Skipping SRI for ${url}: Cache-Control is ` +
+          `${cacheControl ? `"${cacheControl}"` : 'absent'}, so the origin does not declare ` +
+          'this URL immutable and its bytes may differ from the ones hashed here. Pin a ' +
+          'version in the URL, or add the domain to bypassDomains to accept it unprotected. ' +
+          'Only reach for trustDomains on a host you control - forcing a hash onto a ' +
+          "vendor's rolling URL ships a page that breaks on their next deploy."
+        )
       }
 
-      urlSupportCache.set(url, true)
-      return true
+      const data = new Uint8Array(await response.arrayBuffer())
+      resourceCache.set(url, data)
+      return data
     } catch (error) {
       lastError = error
       if (error.name === 'AbortError') {
-        if (logger) {
-          logger.warn(`Resource check timed out: ${url}`)
-        }
-        break // Don't retry timeouts
+        return reject(`Skipping SRI for ${url}: the request timed out.`)
       }
 
       // Don't wait after the last failed attempt
@@ -192,54 +195,8 @@ export async function checkResourceSupport(url, urlSupportCache, logger = null, 
   }
 
   if (logger) {
-    logger.warn(`Failed to check resource support: ${url}`, lastError)
+    logger.warn(`Skipping SRI for ${url}: the request failed.`, lastError)
   }
-  urlSupportCache.set(url, false)
-  return false
-}
-
-/**
- * Optimized resource fetching function with retry mechanism and caching
- */
-export async function fetchResource(url, resourceCache, logger = null, retries = 1) {
-  // Check cache
-  if (resourceCache.has(url)) {
-    return resourceCache.get(url)
-  }
-
-  let lastError
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT)
-
-      const response = await fetch(url, { signal: controller.signal })
-      clearTimeout(timeoutId)
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      const data = new Uint8Array(await response.arrayBuffer())
-      resourceCache.set(url, data)
-      return data
-    } catch (error) {
-      lastError = error
-      if (error.name === 'AbortError') {
-        if (logger) {
-          logger.warn(`Resource fetch timed out: ${url}`)
-        }
-        break // Don't retry timeouts
-      }
-
-      if (attempt < retries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
-      }
-    }
-  }
-
-  if (logger) {
-    logger.warn(`Failed to fetch external resource: ${url}`, lastError)
-  }
+  resourceCache.set(url, null)
   return null
 }

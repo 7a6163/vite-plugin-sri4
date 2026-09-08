@@ -41,12 +41,7 @@ export class ResourceCache {
  */
 export class CacheManager {
   constructor() {
-    this.urlSupportCache = new ResourceCache()
     this.resourceCache = new ResourceCache()
-  }
-
-  getUrlSupportCache() {
-    return this.urlSupportCache
   }
 
   getResourceCache() {
@@ -54,7 +49,6 @@ export class CacheManager {
   }
 
   clearAll() {
-    this.urlSupportCache.clear()
     this.resourceCache.clear()
   }
 }

@@ -180,13 +180,28 @@ A blacklist would have to catch every one of the bottom rows individually, and t
 
 **Pin a version in the URL.** `unpkg.com/react@18.3.1/…` answers `max-age=31536000`; `unpkg.com/react@18/…` answers `max-age=60`. Same for jsdelivr. This is the fix, not a workaround — a floating URL and an integrity attribute are contradictory by construction.
 
-**Or vouch for the host** when you know it is stable and it just does not say so:
+**Or vouch for the host** when you know it is stable and it just does not say so. The shape to look for is a URL that already carries a version, served by an origin that simply sends no `Cache-Control` at all:
 
-```js
-sri({ trustDomains: ['assets.internal.example'] })
+```
+https://js.tappaysdk.com/sdk/tpdirect/v5.19.2
+
+  access-control-allow-origin: *
+  (no cache-control header)
 ```
 
-Do not point `trustDomains` at a vendor's rolling URL. Stripe, for one, documents that `js.stripe.com/v3/` must not be pinned; forcing a hash onto it produces a page that works until their next deploy.
+The version is in the path, so those bytes are as fixed as any `immutable` response — the origin just never says so. That is what `trustDomains` is for:
+
+```js
+sri({ trustDomains: ['js.tappaysdk.com'] })
+```
+
+**When not to use it.** `trustDomains` overrides the one check that stands between you and a hash that stops matching. Do not point it at:
+
+- **a URL without a version in it** — `js.stripe.com/v3/`, `cdn.tailwindcss.com`, `connect.facebook.net/en_US/sdk.js`. Stripe documents that `v3/` must not be pinned; forcing a hash onto it produces a page that works until their next deploy.
+- **a floating range** — `unpkg.com/react@18/…` resolves to whatever 18.x is current.
+- **a host that serves per-client responses** — `fonts.googleapis.com` answers `private` for a reason.
+
+The test is not "do I trust this vendor". It is "will these exact bytes still be at this exact URL after their next release". If the answer comes from the URL itself, `trustDomains` is right; if it comes from hope, use `bypassDomains`.
 
 **Or accept it and silence the warning** with `bypassDomains`. Third-party analytics and widget scripts are usually this case — they are built to auto-update, and there is nothing to pin:
 

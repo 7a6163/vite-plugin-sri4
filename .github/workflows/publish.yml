@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write        # required for OIDC -> npm Trusted Publisher
-      contents: read
+      contents: write       # required to create the GitHub Release
 
     steps:
       - name: Checkout Code
@@ -39,3 +39,24 @@ jobs:
 
       - name: Publish Package
         run: npm publish --access public --provenance
+
+      # Renovate and Dependabot read GitHub Releases, not CHANGELOG.md in the
+      # repo. Without this the upgrade PR body is empty, which is how 4.2.0
+      # landed silently on everyone tracking ^4.0.0.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG.md section for $version" >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md
