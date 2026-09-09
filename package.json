@@ -18,14 +18,15 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "rollup -c",
+    "build": "tsc -p tsconfig.json --emitDeclarationOnly && rollup -c",
     "dev": "rollup -c -w",
-    "lint": "oxlint src test types example rollup.config.mjs vitest.config.js",
+    "lint": "oxlint src test example rollup.config.mjs vitest.config.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "prepublishOnly": "npm run build",
-    "test:mutation": "stryker run"
+    "test:mutation": "stryker run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.contract.json"
   },
   "peerDependencies": {
     "vite": "^6.4.0 || ^7.0.0 || ^8.0.0"
@@ -33,11 +34,14 @@
   "devDependencies": {
     "@rollup/plugin-commonjs": "^29.0.3",
     "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-typescript": "^12.3.0",
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
+    "@types/node": "^26.5.0",
     "@vitest/coverage-v8": "^5.0.0",
     "oxlint": "^1.82.0",
     "rollup": "^4.63.1",
+    "typescript": "^5.9.3",
     "vite": "^8.2.2",
     "vitest": "^5.0.0"
   },

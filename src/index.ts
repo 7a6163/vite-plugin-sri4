@@ -1,17 +1,26 @@
+import type { Plugin, ResolvedConfig, Rollup } from 'vite'
 import { CacheManager } from './cache.js'
 import { createTransformer, injectImportmapIntegrity } from './html-parser.js'
-import { SUPPORTED_HASH_ALGORITHMS, bundleSource, sriHash } from './integrity-calculator.js'
+import { bundleSource, sriHash } from './integrity-calculator.js'
 import { Logger } from './logger.js'
+import { SUPPORTED_HASH_ALGORITHMS } from './types.js'
+import type { SriCrossorigin, SriHashAlgorithm, SriOptions, Transformer } from './types.js'
+
+export type { SriHashAlgorithm, SriOptions } from './types.js'
 
 // Vite 6/7 uses `vite:build-import-analysis`; Vite 8 Rolldown native path adds
 // `native:import-analysis-build`.
 //
 // Why we care where these sit: they substitute `__VITE_PRELOAD__` in entry
 // chunks inside their own generateBundle, and Vite places them immediately
-// AFTER `enforce: 'post'` user plugins. Measured on Vite 8.2.2, a post plugin
-// is at index 25 and the analysis plugin at 26 - so by default we would hash
-// an entry chunk still containing `import("./x.js"),__VITE_PRELOAD__)` while
-// the written file contains `import("./x.js"),[])`.
+// AFTER `enforce: 'post'` user plugins - so by default we would hash an entry
+// chunk still containing `import("./x.js"),__VITE_PRELOAD__)` while the
+// written file contains `import("./x.js"),[])`.
+//
+// Measured on both Vite 6.4.3 and 8.2.2: a plain post plugin lands at the
+// index immediately before the analysis plugin and sees the unsubstituted
+// placeholder in its own generateBundle, while the emitted file has none. The
+// failure is identical on every supported major, not a Vite 8 quirk.
 //
 // The fix is to move THIS plugin one place later, not to rewrite someone
 // else's hook. `config.plugins` is a plain, unfrozen array at configResolved
@@ -23,17 +32,17 @@ const VITE_INTERNAL_ANALYSIS_PLUGINS = [
   'native:import-analysis-build'
 ]
 const DEFAULT_HASH_ALGORITHM = 'sha384'
-const CROSSORIGIN_VALUES = ['anonymous', 'use-credentials']
+const CROSSORIGIN_VALUES = ['anonymous', 'use-credentials'] as const
 const DEFAULT_PLUGIN_NAME = 'vite-plugin-sri4'
 const MANIFEST_FILE_NAME = 'sri-manifest.json'
 const HTML_RE = /\.html?$/
 const JS_MODULE_RE = /\.m?js$/
 
-function toText(source) {
+function toText(source: string | Uint8Array): string {
   return typeof source === 'string' ? source : Buffer.from(source).toString('utf8')
 }
 
-function withTrailingSlash(base) {
+function withTrailingSlash(base: string): string {
   if (!base) return '/'
   return base.endsWith('/') ? base : `${base}/`
 }
@@ -41,8 +50,11 @@ function withTrailingSlash(base) {
 /**
  * Hash every non-HTML output, keyed by bundle file name.
  */
-function hashBundle(bundle, hashAlgorithm) {
-  const hashes = {}
+function hashBundle(
+  bundle: Rollup.OutputBundle,
+  hashAlgorithm: SriHashAlgorithm
+): Record<string, string> {
+  const hashes: Record<string, string> = {}
   for (const [fileName, item] of Object.entries(bundle)) {
     if (HTML_RE.test(fileName)) continue
     const source = bundleSource(item)
@@ -52,10 +64,27 @@ function hashBundle(bundle, hashAlgorithm) {
 }
 
 /**
- * Reject configuration that would build cleanly and then fail in the browser.
+ * `Array.includes` on a narrowly typed list will not accept a wide string, so
+ * the widening is spelled once, here, rather than at each call site.
  */
-function validateOptions(hashAlgorithm, crossorigin) {
-  if (!SUPPORTED_HASH_ALGORITHMS.includes(hashAlgorithm)) {
+function isOneOf<T extends string>(allowed: readonly T[], value: string): value is T {
+  return (allowed as readonly string[]).includes(value)
+}
+
+/**
+ * Reject configuration that would build cleanly and then fail in the browser.
+ *
+ * Both parameters are `string`, not the narrow published types, on purpose: a
+ * plain JS `vite.config.js` gets no type checking at all, and these two throws
+ * are the only thing standing between `hashAlgorithm: 'md5'` and a resource the
+ * browser blocks with no build-time error. Returns the values narrowed, so the
+ * validation is what produces the types the rest of the plugin relies on.
+ */
+function validateOptions(hashAlgorithm: string, crossorigin: string): {
+  hashAlgorithm: SriHashAlgorithm
+  crossorigin: SriCrossorigin
+} {
+  if (!isOneOf(SUPPORTED_HASH_ALGORITHMS, hashAlgorithm)) {
     throw new Error(
       `[${DEFAULT_PLUGIN_NAME}] unsupported hashAlgorithm "${hashAlgorithm}". ` +
       `The SRI spec defines ${SUPPORTED_HASH_ALGORITHMS.join(', ')}; browsers reject ` +
@@ -63,37 +92,44 @@ function validateOptions(hashAlgorithm, crossorigin) {
     )
   }
 
-  if (!CROSSORIGIN_VALUES.includes(crossorigin)) {
+  if (!isOneOf(CROSSORIGIN_VALUES, crossorigin)) {
     throw new Error(
       `[${DEFAULT_PLUGIN_NAME}] crossorigin must be one of ${CROSSORIGIN_VALUES.join(', ')}, ` +
       `got "${crossorigin}"`
     )
   }
+
+  return { hashAlgorithm, crossorigin }
 }
 
-function sri(options = {}) {
+function sri(options: SriOptions = {}): Plugin {
   const {
     ignoreMissingAsset = false,
     bypassDomains = [],
     trustDomains = [],
-    hashAlgorithm = DEFAULT_HASH_ALGORITHM,
-    crossorigin = 'anonymous',
     logLevel = 'warn',
     manifest = false,
     importmap = false
   } = options
 
-  validateOptions(hashAlgorithm, crossorigin)
+  const { hashAlgorithm, crossorigin } = validateOptions(
+    options.hashAlgorithm ?? DEFAULT_HASH_ALGORITHM,
+    options.crossorigin ?? 'anonymous'
+  )
 
   // Create cache manager and logger instances for this plugin instance
   const cacheManager = new CacheManager()
   const logger = new Logger(logLevel, DEFAULT_PLUGIN_NAME)
 
   // bundle fileName -> the integrity we injected, re-checked in writeBundle
-  const hashedAssets = new Map()
+  const hashedAssets = new Map<string, string>()
 
-  let config
-  let transformer
+  // Set in configResolved, read in generateBundle. Vite always calls
+  // configResolved first, which the type system cannot see - hence the `!` at
+  // the two read sites, rather than guards that would add branches no test can
+  // reach and no build can hit.
+  let config: ResolvedConfig | undefined
+  let transformer: Transformer | undefined
 
   return {
     name: DEFAULT_PLUGIN_NAME,
@@ -105,7 +141,7 @@ function sri(options = {}) {
     // injected hashes describing bytes that no longer ship - a green build that
     // only fails in the browser. Fail here instead.
     writeBundle(_, bundle) {
-      const drifted = []
+      const drifted: string[] = []
       for (const [fileName, integrity] of hashedAssets) {
         const item = bundle[fileName]
         if (!item) continue
@@ -144,7 +180,11 @@ function sri(options = {}) {
         hashedAssets
       }, config, cacheManager, logger)
 
-      const plugins = config.plugins
+      // Vite types `plugins` as readonly, which is Vite saying "do not reorder
+      // this". Reordering it is precisely the fix described above, and the
+      // array is a plain unfrozen one at runtime - so the cast is the
+      // deliberate part of the mechanism, not an oversight.
+      const plugins = config.plugins as Plugin[]
 
       // The last one wins: if both names are present we must follow both
       let target = -1
@@ -156,7 +196,7 @@ function sri(options = {}) {
         throw new Error(
           `[${DEFAULT_PLUGIN_NAME}] could not find a Vite import-analysis plugin to run after ` +
           `(looked for: ${VITE_INTERNAL_ANALYSIS_PLUGINS.join(', ')}). ` +
-          `Requires Vite 6.0.0 or higher.`
+          `Requires Vite 6.4.0 or higher.`
         )
       }
 
@@ -179,13 +219,16 @@ function sri(options = {}) {
     },
 
     async generateBundle(_, bundle) {
-      // Computed before emitting anything so the manifest never hashes itself
-      const hashes = manifest || importmap ? hashBundle(bundle, hashAlgorithm) : null
+      // Computed before emitting anything so the manifest never hashes itself.
+      // `{}` rather than null when neither output is wanted: the two readers
+      // below are already gated on the same flags, and a nullable here buys
+      // only a type the compiler cannot narrow.
+      const hashes = manifest || importmap ? hashBundle(bundle, hashAlgorithm) : {}
 
       const htmlFiles = Object.entries(bundle).filter(
-        ([, chunk]) =>
-          chunk.type === 'asset' &&
-          HTML_RE.test(chunk.fileName)
+        (entry): entry is [string, Rollup.OutputAsset] =>
+          entry[1].type === 'asset' &&
+          HTML_RE.test(entry[1].fileName)
       )
 
       if (htmlFiles.length === 0) {
@@ -199,11 +242,11 @@ function sri(options = {}) {
       await Promise.all(
         htmlFiles.map(async ([name, chunk]) => {
           const originalContent = toText(chunk.source)
-          let html = await transformer.transformHTML(bundle, name, originalContent)
+          let html = await transformer!.transformHTML(bundle, name, originalContent)
 
           if (importmap) {
-            const moduleIntegrity = {}
-            const base = withTrailingSlash(config.base)
+            const moduleIntegrity: Record<string, string> = {}
+            const base = withTrailingSlash(config!.base)
             for (const [fileName, integrity] of Object.entries(hashes)) {
               if (JS_MODULE_RE.test(fileName)) moduleIntegrity[base + fileName] = integrity
             }

@@ -1,13 +1,28 @@
 /**
+ * What `fetchVerifiedResource` stores: the bytes, or `null` for "already
+ * checked, must not be hashed". `undefined` from `get` means "not checked yet",
+ * which is a different answer and must stay distinguishable.
+ */
+export type CachedResource = Uint8Array | null
+
+interface CacheEntry {
+  value: CachedResource
+  expiry: number
+}
+
+/**
  * Extended caching mechanism with expiration time
  */
 export class ResourceCache {
-  constructor(ttl = 3600000) { // Default cache for 1 hour
+  cache: Map<string, CacheEntry>
+  ttl: number
+
+  constructor(ttl: number = 3600000) { // Default cache for 1 hour
     this.cache = new Map()
     this.ttl = ttl
   }
 
-  get(key) {
+  get(key: string): CachedResource | undefined {
     const item = this.cache.get(key)
     if (!item) return undefined
 
@@ -20,18 +35,18 @@ export class ResourceCache {
     return item.value
   }
 
-  set(key, value) {
+  set(key: string, value: CachedResource): void {
     this.cache.set(key, {
       value,
       expiry: Date.now() + this.ttl
     })
   }
 
-  has(key) {
+  has(key: string): boolean {
     return this.get(key) !== undefined
   }
 
-  clear() {
+  clear(): void {
     this.cache.clear()
   }
 }
@@ -40,15 +55,17 @@ export class ResourceCache {
  * Cache manager for plugin instances
  */
 export class CacheManager {
+  resourceCache: ResourceCache
+
   constructor() {
     this.resourceCache = new ResourceCache()
   }
 
-  getResourceCache() {
+  getResourceCache(): ResourceCache {
     return this.resourceCache
   }
 
-  clearAll() {
+  clearAll(): void {
     this.resourceCache.clear()
   }
 }

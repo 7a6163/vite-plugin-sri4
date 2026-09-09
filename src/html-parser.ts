@@ -1,11 +1,15 @@
+import type { ResolvedConfig, Rollup } from 'vite'
+import type { CacheManager } from './cache.js'
 import { calculateIntegrity } from './integrity-calculator.js'
+import type { Logger } from './logger.js'
+import type { HtmlChange, HtmlPattern, TransformOptions, Transformer } from './types.js'
 
 /**
  * Match an attribute regardless of quoting style. Attribute order inside a tag
  * is not significant in HTML, so attributes are read out of the matched tag
  * rather than being baked into the tag regex.
  */
-function attrPattern(name) {
+function attrPattern(name: string): RegExp {
   // Lookbehind on whitespace, not `\b` - `\b` matches after the hyphen in
   // `data-src`, and getAttr takes the first match, so a decoy attribute would
   // hijack the URL.
@@ -25,7 +29,7 @@ const REL_RE = attrPattern('rel')
 // rel values whose tags carry an integrity attribute
 const SRI_LINK_RELS = new Set(['stylesheet', 'modulepreload'])
 
-function getAttr(tag, re) {
+function getAttr(tag: string, re: RegExp): string | null {
   const match = tag.match(re)
   if (!match) return null
   // One of the three alternatives matched or the regex would not have, and an
@@ -33,7 +37,7 @@ function getAttr(tag, re) {
   return match[1] ?? match[2] ?? match[3]
 }
 
-export const HTML_PATTERNS = {
+export const HTML_PATTERNS: Record<'script' | 'link', HtmlPattern> = {
   script: {
     regex: /<script\b[^>]*><\/script>/gi,
     endOffset: 10, // length of '></script>'
@@ -53,7 +57,7 @@ export const HTML_PATTERNS = {
 /**
  * Validate HTML input
  */
-function validateHtmlInput(html, htmlPath, logger) {
+function validateHtmlInput(html: string, htmlPath: string, logger: Logger): boolean {
   if (!html || typeof html !== 'string') {
     logger.warn(`Invalid HTML content for ${htmlPath}`)
     return false
@@ -66,7 +70,7 @@ function validateHtmlInput(html, htmlPath, logger) {
  * closing `>`, skipping back over the self-closing slash and any whitespace so
  * `<link ... />` does not become `<link ... / integrity="...">`.
  */
-function insertOffset(tag, endOffset) {
+function insertOffset(tag: string, endOffset: number): number {
   let at = tag.length - endOffset
   while (at > 0 && (tag[at - 1] === '/' || /\s/.test(tag[at - 1]))) at--
   return at
@@ -84,15 +88,15 @@ const SKIP_SRI_ATTR_RE = /\s+skip-sri(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>/]+))?/i
  * insertion has start === end; a removal has empty content.
  */
 async function processMatch(
-  match,
-  pattern,
-  bundle,
-  htmlPath,
-  options,
-  config,
-  cacheManager,
-  logger
-) {
+  match: RegExpExecArray,
+  pattern: HtmlPattern,
+  bundle: Rollup.OutputBundle,
+  htmlPath: string,
+  options: TransformOptions,
+  config: ResolvedConfig,
+  cacheManager: CacheManager,
+  logger: Logger
+): Promise<HtmlChange | null> {
   const tag = match[0]
 
   const skip = SKIP_SRI_ATTR_RE.exec(tag)
@@ -138,15 +142,15 @@ async function processMatch(
  * Process matches for a specific HTML pattern
  */
 async function processPatternMatches(
-  html,
-  pattern,
-  bundle,
-  htmlPath,
-  options,
-  config,
-  cacheManager,
-  logger
-) {
+  html: string,
+  pattern: HtmlPattern,
+  bundle: Rollup.OutputBundle,
+  htmlPath: string,
+  options: TransformOptions,
+  config: ResolvedConfig,
+  cacheManager: CacheManager,
+  logger: Logger
+): Promise<HtmlChange[]> {
   const matches = [...html.matchAll(pattern.regex)]
 
   // Process each match in parallel
@@ -157,22 +161,22 @@ async function processPatternMatches(
   )
 
   // Filter out null results
-  return matchResults.filter(Boolean)
+  return matchResults.filter((change): change is HtmlChange => Boolean(change))
 }
 
 /**
  * Collect all integrity changes from HTML patterns
  */
 async function collectIntegrityChanges(
-  html,
-  bundle,
-  htmlPath,
-  options,
-  config,
-  cacheManager,
-  logger
-) {
-  const changes = []
+  html: string,
+  bundle: Rollup.OutputBundle,
+  htmlPath: string,
+  options: TransformOptions,
+  config: ResolvedConfig,
+  cacheManager: CacheManager,
+  logger: Logger
+): Promise<HtmlChange[]> {
+  const changes: HtmlChange[] = []
 
   // Collect changes from all patterns in parallel
   await Promise.all(
@@ -201,7 +205,7 @@ async function collectIntegrityChanges(
 /**
  * Apply integrity changes to HTML content
  */
-function applyIntegrityChanges(html, changes, logger) {
+function applyIntegrityChanges(html: string, changes: HtmlChange[], logger: Logger): string {
   // Back to front, so earlier offsets stay valid as the string is edited
   changes.sort((a, b) => b.start - a.start)
 
@@ -224,7 +228,11 @@ const HEAD_CLOSE_RE = /<\/head\s*>/i
  * `import()` / Vite's preload helper, which have no build-time HTML tag to
  * rewrite. Engines without support ignore the key rather than failing.
  */
-export function injectImportmapIntegrity(html, integrity, logger) {
+export function injectImportmapIntegrity(
+  html: string,
+  integrity: Record<string, string>,
+  logger: Logger
+): string {
   if (!html || typeof html !== 'string' || Object.keys(integrity).length === 0) {
     return html
   }
@@ -251,14 +259,14 @@ export function injectImportmapIntegrity(html, integrity, logger) {
  * Transform HTML by adding SRI integrity attributes
  */
 export async function transformHTML(
-  bundle,
-  htmlPath,
-  html,
-  options,
-  config,
-  cacheManager,
-  logger
-) {
+  bundle: Rollup.OutputBundle,
+  htmlPath: string,
+  html: string,
+  options: TransformOptions,
+  config: ResolvedConfig,
+  cacheManager: CacheManager,
+  logger: Logger
+): Promise<string> {
   if (!validateHtmlInput(html, htmlPath, logger)) {
     return html
   }
@@ -279,7 +287,12 @@ export async function transformHTML(
 /**
  * Create HTML transformer with given options and config
  */
-export function createTransformer(options, config, cacheManager, logger) {
+export function createTransformer(
+  options: TransformOptions,
+  config: ResolvedConfig,
+  cacheManager: CacheManager,
+  logger: Logger
+): Transformer {
   return {
     transformHTML: (bundle, htmlPath, html) =>
       transformHTML(bundle, htmlPath, html, options, config, cacheManager, logger)
