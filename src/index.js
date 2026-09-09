@@ -8,10 +8,14 @@ import { Logger } from './logger.js'
 //
 // Why we care where these sit: they substitute `__VITE_PRELOAD__` in entry
 // chunks inside their own generateBundle, and Vite places them immediately
-// AFTER `enforce: 'post'` user plugins. Measured on Vite 8.2.2, a post plugin
-// is at index 25 and the analysis plugin at 26 - so by default we would hash
-// an entry chunk still containing `import("./x.js"),__VITE_PRELOAD__)` while
-// the written file contains `import("./x.js"),[])`.
+// AFTER `enforce: 'post'` user plugins - so by default we would hash an entry
+// chunk still containing `import("./x.js"),__VITE_PRELOAD__)` while the
+// written file contains `import("./x.js"),[])`.
+//
+// Measured on both Vite 6.4.3 and 8.2.2: a plain post plugin lands at the
+// index immediately before the analysis plugin and sees the unsubstituted
+// placeholder in its own generateBundle, while the emitted file has none. The
+// failure is identical on every supported major, not a Vite 8 quirk.
 //
 // The fix is to move THIS plugin one place later, not to rewrite someone
 // else's hook. `config.plugins` is a plain, unfrozen array at configResolved
@@ -156,7 +160,7 @@ function sri(options = {}) {
         throw new Error(
           `[${DEFAULT_PLUGIN_NAME}] could not find a Vite import-analysis plugin to run after ` +
           `(looked for: ${VITE_INTERNAL_ANALYSIS_PLUGINS.join(', ')}). ` +
-          `Requires Vite 6.0.0 or higher.`
+          `Requires Vite 6.4.0 or higher.`
         )
       }
 
