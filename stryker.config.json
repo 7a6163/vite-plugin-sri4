@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "mutate": [
+    "src/**/*.js"
+  ],
+  "reporters": [
+    "progress",
+    "clear-text",
+    "html",
+    "json"
+  ],
+  "htmlReporter": {
+    "fileName": "reports/mutation/index.html"
+  },
+  "thresholds": {
+    "high": 90,
+    "low": 80,
+    "break": 80
+  },
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "npx vitest run --coverage.enabled=false --reporter=dot"
+  },
+  "coverageAnalysis": "off",
+  "timeoutMS": 20000,
+  "concurrency": 4,
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  }
+}

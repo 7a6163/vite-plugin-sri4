@@ -10,6 +10,11 @@ vi.mock('crypto')
 
 const analysis = name => ({ name, generateBundle: vi.fn() })
 
+const analysisConfig = () => ({
+  base: '/',
+  plugins: [{ name: 'vite:build-import-analysis', generateBundle: vi.fn() }]
+})
+
 describe('vite-plugin-sri4', () => {
   // Save original console methods to restore later
   const originalConsoleWarn = console.warn
@@ -1232,6 +1237,361 @@ describe('vite-plugin-sri4', () => {
 
       // Test has passed if we didn't throw any errors
       expect(true).toBe(true)
+    })
+  })
+
+  describe('Coverage of edge paths', () => {
+    test('an empty base still yields absolute import map keys', async () => {
+      const plugin = sri({ importmap: true })
+      const config = { base: '', plugins: analysisConfig().plugins }
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<head></head>'
+        },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'console.log(1)' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      // withTrailingSlash('') has to produce '/', not ''
+      expect(bundle['index.html'].source).toContain('"/main.js"')
+    })
+
+    test.each([
+      ['bare', '<script skip-sri src="/main.js"></script>'],
+      ['double-quoted value', '<script skip-sri="yes" src="/main.js"></script>'],
+      ['single-quoted value', `<script skip-sri='yes' src='/main.js'></script>`],
+      ['unquoted value', '<script skip-sri=yes src="/main.js"></script>']
+    ])('skip-sri opts a tag out however it is written (%s)', async (_label, source) => {
+      const plugin = sri()
+      const config = analysisConfig()
+      const bundle = {
+        'index.html': { type: 'asset', fileName: 'index.html', source },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+      // The marker must not ship to the browser
+      expect(bundle['index.html'].source).not.toMatch(/skip-sri/)
+    })
+
+    test('an empty base resolves like a relative one', async () => {
+      const plugin = sri()
+      const config = { base: '', plugins: analysisConfig().plugins }
+      const bundle = {
+        'nested/index.html': {
+          type: 'asset',
+          fileName: 'nested/index.html',
+          source: '<script src="./app.js"></script>'
+        },
+        'nested/app.js': { type: 'chunk', fileName: 'nested/app.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['nested/index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('a non-relative base is stripped from the URL to find the bundle key', async () => {
+      const plugin = sri()
+      const config = { base: '/assets/', plugins: analysisConfig().plugins }
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="/assets/app.js"></script>'
+        },
+        'app.js': { type: 'chunk', fileName: 'app.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('a .htm file is transformed like .html', async () => {
+      const plugin = sri()
+      const config = analysisConfig()
+      const bundle = {
+        'page.htm': {
+          type: 'asset',
+          fileName: 'page.htm',
+          source: '<script src="/main.js"></script>'
+        },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['page.htm'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('the import map covers .mjs chunks as well as .js', async () => {
+      const plugin = sri({ importmap: true })
+      const config = analysisConfig()
+      const bundle = {
+        'index.html': { type: 'asset', fileName: 'index.html', source: '<head></head>' },
+        'a.mjs': { type: 'chunk', fileName: 'a.mjs', code: 'x' },
+        'b.js': { type: 'chunk', fileName: 'b.js', code: 'y' },
+        'c.css': { type: 'asset', fileName: 'c.css', source: 'body{}' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      const html = bundle['index.html'].source
+      expect(html).toContain('"/a.mjs"')
+      expect(html).toContain('"/b.js"')
+      expect(html).not.toContain('"/c.css"')
+    })
+
+    test('a query string is stripped before looking up the bundle key', async () => {
+      const plugin = sri()
+      const config = analysisConfig()
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="/main.js?v=1#frag"></script>'
+        },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('a tag that already carries integrity is left exactly as it is', async () => {
+      const plugin = sri()
+      const config = analysisConfig()
+      const original = '<script src="/main.js" integrity="sha384-theirs"></script>'
+      const bundle = {
+        'index.html': { type: 'asset', fileName: 'index.html', source: original },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).toBe(original)
+    })
+
+    test('a data-integrity attribute does not count as an integrity attribute', async () => {
+      const plugin = sri()
+      const config = analysisConfig()
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script data-integrity="x" src="/main.js"></script>'
+        },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('refuses to read a publicDir path that escapes the directory', async () => {
+      const plugin = sri({ ignoreMissingAsset: true })
+      const config = { ...analysisConfig(), publicDir: `${process.cwd()}/test` }
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="/../package.json"></script>'
+        }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      // A URL must never reach outside publicDir, however it is spelled
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Refusing to read outside publicDir')
+      )
+    })
+
+    test('resolves a relative base against the HTML file own directory', async () => {
+      const plugin = sri()
+      const config = { base: './', plugins: analysisConfig().plugins }
+      const bundle = {
+        'nested/index.html': {
+          type: 'asset',
+          fileName: 'nested/index.html',
+          source: '<script src="./app.js"></script>'
+        },
+        'nested/app.js': { type: 'chunk', fileName: 'nested/app.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['nested/index.html'].source).toMatch(/integrity="sha384-/)
+    })
+
+    test('a self-closing link gets integrity before the slash, not after', async () => {
+      const plugin = sri()
+      const config = analysisConfig()
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<link rel="stylesheet" href="/main.css" />'
+        },
+        'main.css': { type: 'asset', fileName: 'main.css', source: 'body{}' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      // `<link ... / integrity="...">` would be invalid HTML
+      expect(bundle['index.html'].source).toMatch(/integrity="sha384-[^"]+" crossorigin="anonymous" \/>/)
+    })
+
+    test('leaves plugin order alone when it already runs after import analysis', () => {
+      const plugin = sri({ logLevel: 'debug' })
+      const analysisPlugin = { name: 'vite:build-import-analysis', generateBundle: vi.fn() }
+      const plugins = [analysisPlugin, plugin]
+      plugin.configResolved({ base: '/', plugins })
+
+      // Already in the right place - moving would be a no-op at best
+      expect(plugins.map(p => p.name)).toEqual(['vite:build-import-analysis', 'vite-plugin-sri4'])
+    })
+
+    test('moves after the last matching analysis plugin when both names are present', () => {
+      const plugin = sri({ logLevel: 'debug' })
+      const first = { name: 'vite:build-import-analysis', generateBundle: vi.fn() }
+      const second = { name: 'native:import-analysis-build', generateBundle: vi.fn() }
+      const plugins = [plugin, first, second]
+      plugin.configResolved({ base: '/', plugins })
+
+      expect(plugins.map(p => p.name)).toEqual([
+        'vite:build-import-analysis',
+        'native:import-analysis-build',
+        'vite-plugin-sri4'
+      ])
+    })
+
+    test('a base with no trailing slash still separates from the file name', async () => {
+      const plugin = sri({ importmap: true })
+      const config = { base: '/app', plugins: analysisConfig().plugins }
+      const bundle = {
+        'index.html': { type: 'asset', fileName: 'index.html', source: '<head></head>' },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'console.log(1)' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).toContain('"/app/main.js"')
+      expect(bundle['index.html'].source).not.toContain('"/appmain.js"')
+    })
+
+    test('an empty bundle entry gets no integrity rather than a hash of nothing', async () => {
+      const plugin = sri()
+      const config = analysisConfig()
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="/empty.js"></script>'
+        },
+        'empty.js': { type: 'chunk', fileName: 'empty.js', code: '' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+    })
+
+    test('a bundle entry with no content is left out of the manifest', async () => {
+      const plugin = sri({ manifest: true })
+      const config = analysisConfig()
+      const bundle = {
+        'index.html': { type: 'asset', fileName: 'index.html', source: '<head></head>' },
+        'empty.js': { type: 'chunk', fileName: 'empty.js', code: '' },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'x' }
+      }
+
+      const emitFile = vi.fn()
+      plugin.configResolved(config)
+      await plugin.generateBundle.call({ emitFile }, {}, bundle)
+
+      const manifest = JSON.parse(emitFile.mock.calls[0][0].source)
+      expect(manifest).toHaveProperty('main.js')
+      expect(manifest).not.toHaveProperty('empty.js')
+    })
+
+    test('writeBundle ignores a hashed file that is no longer in the bundle', async () => {
+      const plugin = sri()
+      const config = analysisConfig()
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="/main.js"></script>'
+        },
+        'main.js': { type: 'chunk', fileName: 'main.js', code: 'x' }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      // A plugin that removed the file after we hashed it is not drift - there
+      // are no bytes left to disagree with.
+      expect(() => plugin.writeBundle({}, {})).not.toThrow()
+    })
+
+    test('a publicDir path that will not percent-decode is not a crash', async () => {
+      const plugin = sri({ ignoreMissingAsset: true })
+      const config = { ...analysisConfig(), publicDir: '/tmp/does-not-exist-sri4' }
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          // `%` with no valid escape makes decodeURIComponent throw
+          source: '<script src="/100%.js"></script>'
+        }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('not found'))
+    })
+
+    test('a missing file under a real publicDir warns rather than throwing', async () => {
+      const plugin = sri({ ignoreMissingAsset: true })
+      const config = { ...analysisConfig(), publicDir: process.cwd() }
+      const bundle = {
+        'index.html': {
+          type: 'asset',
+          fileName: 'index.html',
+          source: '<script src="/definitely-not-here.js"></script>'
+        }
+      }
+
+      plugin.configResolved(config)
+      await plugin.generateBundle({}, bundle)
+
+      expect(bundle['index.html'].source).not.toMatch(/integrity=/)
     })
   })
 

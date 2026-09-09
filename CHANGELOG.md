@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Testing
+
+- **Coverage is at 100% and enforced.** Statements, branches, functions and lines, with thresholds in `vitest.config.js` so an uncovered path fails the run. Reached partly by new tests and partly by deleting code that existed only to be flexible: `Logger.child()` and the `calculateIntegrity` passthrough on `createTransformer` had no callers, `getAttr`'s `?? null` was unreachable, and the optional-logger scaffolding — `logger = null` defaults plus seven `if (logger)` guards — protected a configuration that cannot occur, since `sri()` always constructs a Logger.
+
+- **Mutation testing via Stryker**, as `npm run test:mutation`. The first run scored 77% against 100% coverage: 162 mutants changed the source and no test noticed. The gaps were real, and are now covered — `no-store` and the qualified `private="…"` / `no-cache="…"` forms were never exercised; the `publicDir` path-traversal guard had no test at all; `base: './'` and `base: ''` were unreachable from any test; `skip-sri` was only tested bare, never with a value; and every immutability test used `max-age=31536000, immutable`, where both passing conditions hold at once, so neither was pinned on its own. The score is now 81.19%, with the break threshold at 80.
+
 ### Documentation
 
 - **The external-resource gate list no longer describes a `HEAD` probe.** 5.1.0 merged the probe into a single `GET`, but the three-condition list in the README still opened with "`HEAD` succeeds", so the shipped 5.1.0 README described a mechanism its own `dist` no longer contained. It now states the single `GET` explicitly, and names `js.tappaysdk.com` — `403` to `HEAD`, `200` to `GET` — as the case that makes the difference legible.

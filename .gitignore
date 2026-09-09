@@ -49,3 +49,7 @@ test-report.junit.xml
 
 # Local agent context, not part of the package
 CLAUDE.md
+
+coverage/
+reports/
+.stryker-tmp/

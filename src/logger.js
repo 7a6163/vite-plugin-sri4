@@ -65,11 +65,4 @@ export class Logger {
       console.debug(...this.formatMessage(message, ...args))
     }
   }
-
-  /**
-   * Create a child logger with the same configuration
-   */
-  child(name) {
-    return new Logger(this.logLevel, `${this.pluginName}:${name}`)
-  }
 }

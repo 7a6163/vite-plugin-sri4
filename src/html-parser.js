@@ -28,7 +28,9 @@ const SRI_LINK_RELS = new Set(['stylesheet', 'modulepreload'])
 function getAttr(tag, re) {
   const match = tag.match(re)
   if (!match) return null
-  return match[1] ?? match[2] ?? match[3] ?? null
+  // One of the three alternatives matched or the regex would not have, and an
+  // empty value is a string rather than undefined - so there is no fourth case.
+  return match[1] ?? match[2] ?? match[3]
 }
 
 export const HTML_PATTERNS = {
@@ -280,8 +282,6 @@ export async function transformHTML(
 export function createTransformer(options, config, cacheManager, logger) {
   return {
     transformHTML: (bundle, htmlPath, html) =>
-      transformHTML(bundle, htmlPath, html, options, config, cacheManager, logger),
-    calculateIntegrity: (bundle, htmlPath, url) =>
-      calculateIntegrity(bundle, htmlPath, url, options, config, cacheManager, logger)
+      transformHTML(bundle, htmlPath, html, options, config, cacheManager, logger)
   }
 }

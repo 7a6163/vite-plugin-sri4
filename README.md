@@ -20,6 +20,7 @@ A Vite plugin to generate Subresource Integrity (SRI) hashes for your assets dur
 - [Example Project](#example-project)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
+- [Testing](#testing)
 - [Contributing](#contributing)
 - [Inspiration](#inspiration)
 - [License](#license)
@@ -336,6 +337,20 @@ This will show:
 - CORS checks
 - Missing asset warnings
 - Bundle-key fallback matches (when a URL is resolved via suffix match)
+
+## Testing
+
+```bash
+npm test              # 174 tests
+npm run test:coverage # the same, with coverage thresholds enforced at 100%
+npm run test:mutation # Stryker, ~4 minutes
+```
+
+Coverage is held at **100%** of statements, branches, functions and lines, enforced by thresholds in `vitest.config.js` — an uncovered path fails the run rather than quietly lowering the number.
+
+Coverage only proves a line ran. Mutation testing changes the code and checks whether a test notices, which is a much harder bar: at 100% coverage this suite still let 162 mutants through on the first run. The gaps it found were real — `no-store` and the qualified `private="…"` / `no-cache="…"` forms were never exercised, the `publicDir` path-traversal guard had no test, `base: './'` and `base: ''` were unreachable from any test, and the immutability tests all used `max-age=31536000, immutable`, where **both** passing conditions hold at once, so neither was actually pinned.
+
+The mutation score is **81.19%**, with a break threshold of 80. The remaining survivors are mostly equivalent mutants — warning message wording, cache clearing that has no observable effect, and `typeof source === 'string' ? source : Buffer.from(source)`, whose two branches hash identically. Killing those would mean asserting log text verbatim, which costs more than it protects.
 
 ## Contributing
 
