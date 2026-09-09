@@ -1,0 +1,44 @@
+name: Mutation
+
+# Coverage runs on every push; this does not. A full mutation run re-executes
+# the whole suite once per mutant - ~4 minutes for 707 mutants - which is too
+# much to put in front of every commit for a signal that moves slowly.
+# Weekly catches the drift, and workflow_dispatch covers "I just rewrote the
+# gating logic and want to know now".
+on:
+  schedule:
+    # Mondays, 03:00 UTC
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      # Fails when the score drops below stryker.config.json's break threshold.
+      # A scheduled failure mails the repo owner, which is the point - nobody
+      # is watching this tab.
+      - name: Run Mutation Tests
+        run: npm run test:mutation
+
+      # Uploaded even on failure: the report is how you find which mutants
+      # survived, and that is exactly what you need when it just went red.
+      - name: Upload Mutation Report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 30
