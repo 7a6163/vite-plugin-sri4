@@ -1,3 +1,6 @@
+import type { CachedResource, ResourceCache } from './cache.js'
+import type { Logger } from './logger.js'
+
 // Global fetch, stable since Node 18 - the floor the Vite 6.4 peer range
 // already implies. No dependency needed.
 const DEFAULT_TIMEOUT = 5000
@@ -6,7 +9,7 @@ const DEFAULT_TIMEOUT = 5000
  * Does an external URL's host match one of `domains`, or a subdomain of one?
  * Used by both `bypassDomains` and `trustDomains`.
  */
-export function matchesDomain(url, domains = [], logger) {
+export function matchesDomain(url: string, domains: string[] = [], logger: Logger): boolean {
   if (!url || typeof url !== 'string' || !url.startsWith('http')) return false
   if (domains.length === 0) return false
 
@@ -51,7 +54,7 @@ const IMMUTABLE_MAX_AGE = 31536000
  * Nothing lands between 604800 and 30672000, so the threshold is not a
  * balancing act - it separates two clusters the CDNs themselves created.
  */
-function isImmutableResponse(cacheControl) {
+function isImmutableResponse(cacheControl: string | null): boolean {
   if (!cacheControl) return false
 
   let immutable = false
@@ -110,18 +113,27 @@ function isImmutableResponse(cacheControl) {
  * That is the right side to lose on: the accepted case, which is every build
  * that actually ships hashes, goes from two requests to one.
  */
-export async function fetchVerifiedResource(url, resourceCache, logger, trusted = false, retries = 1) {
-  if (resourceCache.has(url)) {
-    return resourceCache.get(url)
+export async function fetchVerifiedResource(
+  url: string,
+  resourceCache: ResourceCache,
+  logger: Logger,
+  trusted: boolean = false,
+  retries: number = 1
+): Promise<CachedResource> {
+  // One read, not `has()` then `get()`: a stored `null` means "checked, must not
+  // be hashed" and must not be confused with `undefined` for "not checked".
+  const cached = resourceCache.get(url)
+  if (cached !== undefined) {
+    return cached
   }
 
-  const reject = (message) => {
+  const reject = (message: string): null => {
     logger.warn(message)
     resourceCache.set(url, null)
     return null
   }
 
-  let lastError
+  let lastError: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const controller = new AbortController()
@@ -181,7 +193,11 @@ export async function fetchVerifiedResource(url, resourceCache, logger, trusted 
       return data
     } catch (error) {
       lastError = error
-      if (error.name === 'AbortError') {
+      // `error` is `unknown` in a catch under strict. Read `.name` the way the
+      // JS did rather than testing the prototype: Node raises a DOMException
+      // here and a fabricated one may be a plain object, so the prototype is
+      // not what identifies it.
+      if ((error as { name?: unknown }).name === 'AbortError') {
         return reject(`Skipping SRI for ${url}: the request timed out.`)
       }
 

@@ -59,6 +59,33 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Typecheck
+        run: npm run typecheck
+
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # types/ is generated but committed, so a PR's diff shows every change to
+      # the published type surface. Without this check the committed copy drifts
+      # from src/ and that signal quietly becomes a lie.
+      - name: Check committed declarations are up to date
+        run: git diff --exit-code types/
+
   compat:
     name: Vite ${{ matrix.vite }}
     runs-on: ubuntu-latest

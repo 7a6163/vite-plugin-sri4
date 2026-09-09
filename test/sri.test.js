@@ -96,10 +96,15 @@ describe('real vite build', () => {
   })
 
   test('emits a manifest covering every non-HTML output', async () => {
-    const { output, byName } = await buildWith({ manifest: true })
+    const { output, byName, html } = await buildWith({ manifest: true })
 
     const manifest = output.find(o => o.fileName === 'sri-manifest.json')
     expect(manifest).toBeTruthy()
+
+    // manifest does not imply importmap. Both options read the same computed
+    // hashes, so an injection that is not gated on `importmap` would ship an
+    // import map to everyone who only asked for a manifest.
+    expect(html).not.toContain('type="importmap"')
 
     const hashes = JSON.parse(manifest.source)
     expect(Object.keys(hashes).length).toBeGreaterThan(0)

@@ -1,23 +1,23 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import type { ResolvedConfig, Rollup } from 'vite'
+import type { CacheManager } from './cache.js'
+import type { Logger } from './logger.js'
 import { matchesDomain, fetchVerifiedResource } from './network-utils.js'
+import type { BundleItem, SriHashAlgorithm, TransformOptions } from './types.js'
 
 /**
  * Read the hashable source out of a bundle entry (chunk code or asset source)
  */
-export function bundleSource(item) {
+export function bundleSource(item: BundleItem): string | Uint8Array {
   return item.type === 'chunk' ? item.code : item.source
 }
-
-// The only algorithms the SRI spec defines. Browsers reject anything else,
-// which blocks the resource with no build-time error at all.
-export const SUPPORTED_HASH_ALGORITHMS = ['sha256', 'sha384', 'sha512']
 
 /**
  * Compute an SRI string for a source that may be a string, Buffer or Uint8Array
  */
-export function sriHash(source, hashAlgorithm) {
+export function sriHash(source: string | Uint8Array, hashAlgorithm: SriHashAlgorithm): string {
   const hash = createHash(hashAlgorithm)
   hash.update(typeof source === 'string' ? source : Buffer.from(source))
   return `${hashAlgorithm}-${hash.digest('base64')}`
@@ -32,7 +32,7 @@ const HTTP_RE = /^https?:/i
 /**
  * The URL to fetch for an external resource, or null if it is not fetchable.
  */
-function externalUrl(url) {
+function externalUrl(url: string): string | null {
   if (HTTP_RE.test(url)) return url
   // Protocol-relative: same origin scheme as the page, https at build time
   if (url.startsWith('//')) return `https:${url}`
@@ -42,7 +42,7 @@ function externalUrl(url) {
 /**
  * Improved method for getting bundle keys
  */
-function getBundleKey(htmlPath, url, config) {
+function getBundleKey(htmlPath: string, url: string, config: ResolvedConfig): string {
   // Bundle keys never carry a query string or fragment
   const cleanUrl = url.replace(/[?#].*$/, '')
 
@@ -72,7 +72,11 @@ function getBundleKey(htmlPath, url, config) {
  * `assets/vendor-main.js` - a cross-filename match would inject a valid-looking
  * but wrong hash, which the browser rejects with no build-time error.
  */
-export function findBundleKey(bundle, bundleKey, logger) {
+export function findBundleKey(
+  bundle: Rollup.OutputBundle,
+  bundleKey: string,
+  logger: Logger
+): string | undefined {
   const candidates = Object.keys(bundle).filter(key =>
     key === bundleKey ||
     key.endsWith(`/${bundleKey}`) ||
@@ -96,12 +100,16 @@ export function findBundleKey(bundle, bundleKey, logger) {
  * Returns null rather than throwing so the caller keeps its own missing-asset
  * policy.
  */
-async function readPublicAsset(config, bundleKey, logger) {
+async function readPublicAsset(
+  config: ResolvedConfig,
+  bundleKey: string,
+  logger: Logger
+): Promise<Uint8Array | null> {
   const publicDir = config.publicDir
   if (!publicDir) return null
 
   // Bundle keys come from URLs, which may be percent-encoded
-  let decoded
+  let decoded: string
   try {
     decoded = decodeURIComponent(bundleKey)
   } catch {
@@ -130,14 +138,14 @@ async function readPublicAsset(config, bundleKey, logger) {
  * Calculate SRI integrity hash for a given resource
  */
 export async function calculateIntegrity(
-  bundle,
-  htmlPath,
-  url,
-  options,
-  config,
-  cacheManager,
-  logger
-) {
+  bundle: Rollup.OutputBundle,
+  htmlPath: string,
+  url: string,
+  options: TransformOptions,
+  config: ResolvedConfig,
+  cacheManager: CacheManager,
+  logger: Logger
+): Promise<string | null> {
   const {
     ignoreMissingAsset,
     bypassDomains,
@@ -163,8 +171,8 @@ export async function calculateIntegrity(
     return null
   }
 
-  let source
-  let bundleFileName = null
+  let source: string | Uint8Array | null | undefined
+  let bundleFileName: string | null = null
   if (fetchUrl) {
     const trusted = matchesDomain(fetchUrl, trustDomains, logger)
     source = await fetchVerifiedResource(

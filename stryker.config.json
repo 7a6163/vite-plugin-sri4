@@ -2,7 +2,7 @@
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "packageManager": "npm",
   "mutate": [
-    "src/**/*.js"
+    "src/**/*.ts"
   ],
   "reporters": [
     "progress",
